@@ -72,7 +72,12 @@ class LolBot(commands.Bot):
         if guild_id:  # sincroniza na hora no seu servidor (o global pode levar até 1h)
             guild = discord.Object(id=int(guild_id))
             self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
+            try:
+                synced = await self.tree.sync(guild=guild)
+            except discord.Forbidden:
+                raise SystemExit(
+                    "\n❌ O bot não está no servidor do GUILD_ID (ou o ID está errado).\n"
+                    "   Convide o bot pelo link do OAuth2 (veja o README) e confira o GUILD_ID no .env.\n")
         else:
             synced = await self.tree.sync()
         log.info("%d comandos sincronizados", len(synced))
