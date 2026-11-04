@@ -48,7 +48,9 @@ class Tree(app_commands.CommandTree):
 class LolBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()  # nenhum intent privilegiado é necessário
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents, tree_cls=Tree)
+        # max_messages=None: não guarda mensagens em memória (o bot não precisa) — economiza RAM
+        super().__init__(command_prefix=commands.when_mentioned, intents=intents, tree_cls=Tree,
+                         max_messages=None)
         self.db = Database(os.getenv("DATABASE_PATH", "bot.db"))
         self.session: aiohttp.ClientSession | None = None
         self.riot: RiotAPI | None = None
@@ -70,19 +72,20 @@ class LolBot(commands.Bot):
         for ext in EXTENSIONS:
             await self.load_extension(ext)
 
+        # Comandos globais: funcionam em todos os servidores onde o bot estiver
+        synced = await self.tree.sync()
+        log.info("%d comandos sincronizados em todos os servidores", len(synced))
+
+        # Versões antigas registravam os comandos só no servidor do GUILD_ID.
+        # Limpa essa cópia para não aparecer cada comando duplicado lá.
         guild_id = os.getenv("GUILD_ID")
-        if guild_id:  # sincroniza na hora no seu servidor (o global pode levar até 1h)
+        if guild_id:
             guild = discord.Object(id=int(guild_id))
-            self.tree.copy_global_to(guild=guild)
+            self.tree.clear_commands(guild=guild)
             try:
-                synced = await self.tree.sync(guild=guild)
-            except discord.Forbidden:
-                raise SystemExit(
-                    "\n❌ O bot não está no servidor do GUILD_ID (ou o ID está errado).\n"
-                    "   Convide o bot pelo link do OAuth2 (veja o README) e confira o GUILD_ID no .env.\n")
-        else:
-            synced = await self.tree.sync()
-        log.info("%d comandos sincronizados", len(synced))
+                await self.tree.sync(guild=guild)
+            except discord.HTTPException:
+                pass
 
     async def on_ready(self):
         log.info("Logado como %s (id %s)", self.user, self.user.id)

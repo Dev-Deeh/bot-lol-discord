@@ -47,6 +47,18 @@ Copie `.env.example` para `.env` e preencha `DISCORD_TOKEN`, `GUILD_ID` e `RIOT_
 python main.py
 ```
 
+## ☁️ Deixar online 24h (Google Cloud, VM e2-micro grátis)
+1. No [Cloud Shell](https://shell.cloud.google.com), crie a VM (o script instala e liga o bot sozinho):
+```bash
+gcloud compute instances create bot-deeh-lol --zone=us-central1-a --machine-type=e2-micro --image-family=debian-12 --image-project=debian-cloud --boot-disk-size=30GB --boot-disk-type=pd-standard --metadata=startup-script-url=https://raw.githubusercontent.com/Dev-Deeh/bot-lol-discord/main/deploy/gcp-startup.sh
+```
+2. Envie o `.env` (e o `bot.db`, se quiser manter as contas vinculadas) pelo menu **Upload** do Cloud Shell e copie:
+```bash
+gcloud compute scp .env bot.db bot-deeh-lol:/tmp/ --zone=us-central1-a && gcloud compute ssh bot-deeh-lol --zone=us-central1-a --command='sudo mv /tmp/.env /tmp/bot.db /opt/bot/ && sudo chown bot:bot /opt/bot/.env /opt/bot/bot.db && sudo chmod 600 /opt/bot/.env && sudo systemctl restart bot-lol'
+```
+3. Ver os logs: `gcloud compute ssh bot-deeh-lol --zone=us-central1-a --command='sudo journalctl -u bot-lol -n 30'`
+4. Atualizar o bot depois de mudar o código no GitHub: reinicie a VM (o script faz `git pull` em todo boot).
+
 ## ℹ️ Observações
 - Os dados ficam no arquivo `bot.db` (SQLite). Faça backup dele de vez em quando.
 - Imagens: [Data Dragon](https://developer.riotgames.com/docs/lol#data-dragon) (oficial da Riot) e emblemas de elo

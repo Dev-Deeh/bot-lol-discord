@@ -184,33 +184,50 @@ def tier_label(tier, rank) -> str:
 
 # ================================================================== gerador
 class CardMaker:
-    def __init__(self, session: aiohttp.ClientSession, ddragon, max_cache=400):
+    """Baixa e guarda as imagens COMPRIMIDAS (PNG/JPG) num cache limitado em bytes,
+    pra caber em hospedagens com pouca memória (ex.: 100 MB)."""
+
+    def __init__(self, session: aiohttp.ClientSession, ddragon, max_cache_bytes=12 * 1024 * 1024):
         self.session = session
         self.dd = ddragon
-        self.cache: OrderedDict[str, Image.Image] = OrderedDict()
-        self.max_cache = max_cache
+        self.cache: OrderedDict[str, bytes] = OrderedDict()
+        self.cache_bytes = 0
+        self.max_cache_bytes = max_cache_bytes
+
+    def _remember(self, url: str, data: bytes):
+        self.cache[url] = data
+        self.cache_bytes += len(data)
+        while self.cache_bytes > self.max_cache_bytes and self.cache:
+            _, old = self.cache.popitem(last=False)
+            self.cache_bytes -= len(old)
 
     async def img(self, url: str | None) -> Image.Image | None:
         if not url:
             return None
-        if url in self.cache:
+        data = self.cache.get(url)
+        if data is not None:
             self.cache.move_to_end(url)
-            return self.cache[url]
+        else:
+            try:
+                async with self.session.get(url, headers=UA, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    if r.status != 200:
+                        return None
+                    data = await r.read()
+                if "ranked-emblem" in url:  # emblemas vêm 1280x720 com muita borda: recorta e reduz uma vez
+                    im = crop_alpha(Image.open(io.BytesIO(data)).convert("RGBA"))
+                    im.thumbnail((240, 240), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    im.save(buf, "PNG")
+                    data = buf.getvalue()
+                if "/splash/" not in url:  # splash é grande e varia muito: não vale guardar
+                    self._remember(url, data)
+            except Exception:
+                log.warning("Falha ao baixar imagem %s", url)
+                return None
         try:
-            async with self.session.get(url, headers=UA, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status != 200:
-                    return None
-                data = await r.read()
-            im = Image.open(io.BytesIO(data)).convert("RGBA")
+            return Image.open(io.BytesIO(data)).convert("RGBA")
         except Exception:
-            log.warning("Falha ao baixar imagem %s", url)
             return None
-        if "ranked-emblem" in url:
-            im = crop_alpha(im)
-        self.cache[url] = im
-        while len(self.cache) > self.max_cache:
-            self.cache.popitem(last=False)
-        return im
 
     async def imgs(self, urls):
         return await asyncio.gather(*(self.img(u) for u in urls))
