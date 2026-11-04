@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from core.cards import CardMaker
 from core.db import Database
 from core.ddragon import DDragon
 from core.riot import RiotAPI, RiotError
@@ -17,7 +18,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bot")
 
-EXTENSIONS = ["cogs.geral", "cogs.lol", "cogs.equipe", "cogs.draft", "cogs.diversao", "cogs.utilidades"]
+EXTENSIONS = ["cogs.geral", "cogs.lol"]
 
 
 class Tree(app_commands.CommandTree):
@@ -59,6 +60,7 @@ class LolBot(commands.Bot):
         self.riot = RiotAPI(self.session, os.getenv("RIOT_API_KEY", ""),
                             os.getenv("RIOT_PLATFORM", "br1"), os.getenv("RIOT_REGION", "americas"))
         self.ddragon = DDragon(self.session)
+        self.cards = CardMaker(self.session, self.ddragon)
         try:
             version = await self.ddragon.refresh()
             log.info("Data Dragon carregado (versão %s)", version)

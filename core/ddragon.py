@@ -22,7 +22,9 @@ class DDragon:
         self.by_norm: dict = {}        # nome normalizado -> dados
         self.runes: dict = {}          # id da runa/árvore -> nome
         self.keystones: list[str] = []
+        self.rune_icons: dict = {}
         self.summoner_spells: dict = {}
+        self.summoner_spell_icons: dict = {}
         self._items = None
         self._cache: dict = {}
 
@@ -46,15 +48,20 @@ class DDragon:
 
         runes = await self._json(f"{BASE}/cdn/{latest}/data/{self.lang}/runesReforged.json")
         self.runes = {}
+        self.rune_icons = {}
         self.keystones = [r["name"] for style in runes for r in style["slots"][0]["runes"]]
         for style in runes:
             self.runes[style["id"]] = style["name"]
+            self.rune_icons[style["id"]] = f"{BASE}/cdn/img/{style['icon']}"
             for slot in style["slots"]:
                 for rune in slot["runes"]:
                     self.runes[rune["id"]] = rune["name"]
+                    self.rune_icons[rune["id"]] = f"{BASE}/cdn/img/{rune['icon']}"
 
         spells = await self._json(f"{BASE}/cdn/{latest}/data/{self.lang}/summoner.json")
         self.summoner_spells = {int(s["key"]): s["name"] for s in spells["data"].values()}
+        self.summoner_spell_icons = {int(s["key"]): f"{BASE}/cdn/{latest}/img/spell/{s['image']['full']}"
+                                     for s in spells["data"].values()}
 
         self._items = None
         self._cache.clear()
