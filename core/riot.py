@@ -45,6 +45,7 @@ class RiotAPI:
         self.platform = platform
         self.region = region
         self.limiter = RateLimiter([(18, 1), (95, 120)])
+        self._match_cache: dict = {}
 
     @property
     def platform_url(self):
@@ -116,4 +117,12 @@ class RiotAPI:
             f"{self.region_url}/lol/match/v5/matches/by-puuid/{puuid}/ids", params=params) or []
 
     async def match(self, match_id: str):
-        return await self._get(f"{self.region_url}/lol/match/v5/matches/{match_id}")
+        # partida terminada nunca muda: guarda as últimas em memória pra economizar a cota da API
+        if match_id in self._match_cache:
+            return self._match_cache[match_id]
+        data = await self._get(f"{self.region_url}/lol/match/v5/matches/{match_id}")
+        if data:
+            self._match_cache[match_id] = data
+            while len(self._match_cache) > 150:
+                self._match_cache.pop(next(iter(self._match_cache)))
+        return data

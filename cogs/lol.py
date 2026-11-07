@@ -8,7 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from core import util
-from core.cards_hell import profile_hell
+from core.cards_pro import profile_pro
 from core.riot import RiotError
 from core.util import UserError
 
@@ -135,14 +135,14 @@ class Lol(commands.Cog):
         puuid, name, tag = await self.resolve(interaction, riot_id, membro)
         await self.bot.ddragon.ensure()
         riot = self.bot.riot
-        summ, entries, masteries, ids = await asyncio.gather(
-            riot.summoner_by_puuid(puuid), riot.league_entries(puuid), riot.top_masteries(puuid, 3),
-            riot.match_ids(puuid, count=5))
+        # 10 partidas: as 5 últimas aparecem no card; as 10 decidem o campeão de fundo (as partidas ficam em cache)
+        summ, entries, ids = await asyncio.gather(
+            riot.summoner_by_puuid(puuid), riot.league_entries(puuid), riot.match_ids(puuid, count=10))
         if not summ:
             raise UserError("Essa conta não tem perfil de LoL na região do bot.")
         matches = [m for m in await asyncio.gather(*(riot.match(i) for i in ids)) if m]
-        card = await profile_hell(self.bot.cards, name, tag, summ["summonerLevel"], summ["profileIconId"],
-                                  entries, masteries, matches, puuid)
+        card = await profile_pro(self.bot.cards, name, tag, summ["summonerLevel"], summ["profileIconId"],
+                                 entries, matches, puuid, "inferno")
         await interaction.followup.send(file=discord.File(card, filename="perfil.jpg"))
 
     # ------------------------------------------------------------ /partida

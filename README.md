@@ -8,7 +8,7 @@ emblema do elo e ícones de itens, runas e feitiços.
 | Comando | O que faz |
 |---|---|
 | `/vincular Nick#TAG` | Liga sua conta da Riot ao Discord (verifica pelo ícone de perfil) e dá o cargo do seu elo |
-| `/perfil` | Card estilo "Welcome to Hell" (fogo + neon): elo Solo/Flex, **últimas 5 partidas** estilo kill feed, resumo e os 3 mais jogados |
+| `/perfil` | Card estilo transmissão de esports: elo Solo/Flex, resumo e campeões das **últimas 5 partidas**; o fundo é o campeão mais jogado nas últimas 10 |
 | `/partida` | Card da partida ao vivo: campeões, feitiços, runas, elo e winrate dos 10 jogadores |
 | `/ranking` | Card com o ranking de elo do servidor |
 | `/desvincular` | Remove sua conta |
@@ -62,8 +62,8 @@ gcloud compute scp .env bot.db bot-deeh-lol:/tmp/ --zone=us-central1-a && gcloud
 ## ℹ️ Observações
 - Os dados ficam no arquivo `bot.db` (SQLite). Faça backup dele de vez em quando.
 - Imagens: [Data Dragon](https://developer.riotgames.com/docs/lol#data-dragon) (oficial da Riot) e emblemas de elo
-  do [Community Dragon](https://communitydragon.org). Fontes Montserrat, Rubik Wet Paint e Bangers (licença OFL) e
-  Rock Salt (Apache 2.0) — licenças em `assets/fonts`.
+  do [Community Dragon](https://communitydragon.org). Fontes Montserrat, Bebas Neue e Barlow Condensed (licença OFL) —
+  licenças em `assets/fonts`.
 - O bot precisa estar ligado pra funcionar. Pra deixar 24h, hospede numa VPS, numa Raspberry Pi ou em serviços
   como Railway, Fly.io ou Oracle Cloud (free tier).
 
