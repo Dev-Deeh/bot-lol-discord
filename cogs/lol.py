@@ -8,6 +8,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from core import util
+from core.cards_hell import profile_hell
 from core.riot import RiotError
 from core.util import UserError
 
@@ -126,21 +127,23 @@ class Lol(commands.Cog):
         await interaction.response.send_message("✅ Conta desvinculada.", ephemeral=True)
 
     # ------------------------------------------------------------ /perfil
-    @app_commands.command(name="perfil", description="Card com elo, winrate e campeões mais jogados")
+    @app_commands.command(name="perfil", description="Card com elo, últimas 5 partidas e campeões mais jogados")
     @app_commands.describe(riot_id="Nick#TAG (vazio = sua conta vinculada)", membro="Membro com conta vinculada")
     async def perfil(self, interaction: discord.Interaction, riot_id: str | None = None,
                      membro: discord.Member | None = None):
         await interaction.response.defer(thinking=True)
         puuid, name, tag = await self.resolve(interaction, riot_id, membro)
         await self.bot.ddragon.ensure()
-        summ, entries, masteries = await asyncio.gather(
-            self.bot.riot.summoner_by_puuid(puuid), self.bot.riot.league_entries(puuid),
-            self.bot.riot.top_masteries(puuid, 3))
+        riot = self.bot.riot
+        summ, entries, masteries, ids = await asyncio.gather(
+            riot.summoner_by_puuid(puuid), riot.league_entries(puuid), riot.top_masteries(puuid, 3),
+            riot.match_ids(puuid, count=5))
         if not summ:
             raise UserError("Essa conta não tem perfil de LoL na região do bot.")
-        card = await self.bot.cards.profile(name, tag, summ["summonerLevel"], summ["profileIconId"],
-                                            entries, masteries)
-        await interaction.followup.send(file=png(card, "perfil"))
+        matches = [m for m in await asyncio.gather(*(riot.match(i) for i in ids)) if m]
+        card = await profile_hell(self.bot.cards, name, tag, summ["summonerLevel"], summ["profileIconId"],
+                                  entries, masteries, matches, puuid)
+        await interaction.followup.send(file=discord.File(card, filename="perfil.jpg"))
 
     # ------------------------------------------------------------ /partida
     @app_commands.command(name="partida", description="Card da partida ao vivo de um jogador (scout!)")
