@@ -8,7 +8,7 @@ cd /opt/bot || exit 1
 sudo -u bot git log --oneline -1
 sudo -u bot .venv/bin/python tools/set_config.py bot.db "$GUILD" \
   privados:cat=1569480059251593333 \
-  privados:roles=1569318557668474951,1569318559241470032,1569327344173195264,1569318560042455206,1569318561795547217 \
+  privados:roles=1569318560042455206,1569484939920154775 \
   autorole=1569318562756034662
 systemctl restart bot-lol
 sleep 45
