@@ -6,6 +6,7 @@
   Quem entra nele ganha uma sala trancada só sua; o dono convida amigos com /sala.
   A sala é apagada quando fica vazia.
 """
+import asyncio
 import logging
 import re
 
@@ -51,6 +52,7 @@ class Servidor(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        self.locks: dict[int, asyncio.Lock] = {}
 
     async def cog_load(self):
         self.bot.add_dynamic_items(VerifyButton)
@@ -80,7 +82,17 @@ class Servidor(commands.Cog):
             return None, set()
         return guild.get_channel(int(cat_id)), {int(r) for r in roles.split(",") if r}
 
+    def guild_lock(self, guild_id: int) -> asyncio.Lock:
+        # uma sincronização por vez em cada servidor (evita criar a mesma sala duas vezes)
+        if guild_id not in self.locks:
+            self.locks[guild_id] = asyncio.Lock()
+        return self.locks[guild_id]
+
     async def sync_member(self, member: discord.Member, category, team_roles: set):
+        async with self.guild_lock(member.guild.id):
+            await self._sync_member(member, category, team_roles)
+
+    async def _sync_member(self, member: discord.Member, category, team_roles: set):
         if member.bot or category is None:
             return
         row = await self.bot.db.fetchone("SELECT channel_id FROM personal_rooms WHERE guild_id=? AND owner_id=?",
@@ -121,8 +133,19 @@ class Servidor(commands.Cog):
         category, team_roles = await self.personal_config(guild)
         if category is None:
             return
-        for member in guild.members:
-            await self.sync_member(member, category, team_roles)
+        async with self.guild_lock(guild.id):
+            for member in guild.members:
+                await self._sync_member(member, category, team_roles)
+            # faxina: qualquer sala na categoria que não seja o privado registrado de alguém do time é apagada
+            rows = await self.bot.db.fetchall("SELECT channel_id FROM personal_rooms WHERE guild_id=?", (guild.id,))
+            tracked = {r["channel_id"] for r in rows}
+            for channel in category.voice_channels:
+                if channel.id not in tracked:
+                    try:
+                        await channel.delete(reason="Privado sem dono do time")
+                        log.info("Privado órfão apagado: %s", channel.name)
+                    except discord.HTTPException:
+                        pass
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
@@ -156,7 +179,7 @@ class Servidor(commands.Cog):
                 except discord.HTTPException:
                     pass
 
-    @tasks.loop(minutes=30)
+    @tasks.loop(minutes=10)
     async def personal_sync(self):
         for guild in self.bot.guilds:
             try:
