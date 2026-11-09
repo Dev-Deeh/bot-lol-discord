@@ -36,7 +36,7 @@ class VerifyButton(discord.ui.DynamicItem[discord.ui.Button], template=r"verify:
             return await interaction.response.send_message("⚠️ O cargo de verificação não existe mais. "
                                                            "Avise um admin.", ephemeral=True)
         if role in interaction.user.roles:
-            return await interaction.response.send_message("Você já está verificado! 🌸", ephemeral=True)
+            return await interaction.response.send_message("Você já está verificado!", ephemeral=True)
         try:
             await interaction.user.add_roles(role, reason="Aceitou as regras")
         except discord.Forbidden:

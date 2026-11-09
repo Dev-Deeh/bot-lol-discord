@@ -23,24 +23,40 @@ def png(buf, name: str) -> discord.File:
 
 
 class VerifyView(util.BaseView):
+    # A Riot leva alguns minutos para mostrar o ícone novo na API: o bot fica conferindo sozinho.
+    CHECKS, INTERVAL = 13, 15  # ~3 minutos
+
     def __init__(self, cog, user_id: int, puuid: str, riot_id: str, icon_id: int):
-        super().__init__(timeout=900)
+        super().__init__(timeout=1800)
         self.cog, self.user_id, self.puuid, self.riot_id, self.icon_id = cog, user_id, puuid, riot_id, icon_id
+        self.checking = False
 
     @discord.ui.button(label="Já troquei o ícone", emoji="✅", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id:
             return await interaction.response.send_message("Esse botão não é pra você.", ephemeral=True)
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        summ = await self.cog.bot.riot.summoner_by_puuid(self.puuid)
-        if not summ or summ.get("profileIconId") != self.icon_id:
-            return await interaction.followup.send(
-                "❌ O ícone ainda não mudou. Às vezes leva alguns segundos depois de trocar no cliente — "
-                "tenta de novo.", ephemeral=True)
-        await self.cog.save_account(interaction.guild, interaction.user, self.puuid, self.riot_id)
-        self.stop()
-        await interaction.followup.send(
-            f"✅ Conta **{self.riot_id}** vinculada! Já pode voltar seu ícone pro normal.", ephemeral=True)
+        if self.checking:
+            return await interaction.response.send_message("⏳ Já estou conferindo, aguarde...", ephemeral=True)
+        self.checking = True
+        try:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            for attempt in range(self.CHECKS):
+                summ = await self.cog.bot.riot.summoner_by_puuid(self.puuid)
+                if summ and summ.get("profileIconId") == self.icon_id:
+                    await self.cog.save_account(interaction.guild, interaction.user, self.puuid, self.riot_id)
+                    self.stop()
+                    return await interaction.edit_original_response(
+                        content=f"✅ Conta **{self.riot_id}** vinculada! Já pode voltar seu ícone pro normal.")
+                if attempt == 0:
+                    await interaction.edit_original_response(
+                        content="⏳ Ainda não apareceu o ícone novo. A Riot costuma levar **1 a 3 minutos** pra "
+                                "atualizar — vou ficar conferindo sozinho, não precisa clicar de novo.")
+                await asyncio.sleep(self.INTERVAL)
+            await interaction.edit_original_response(
+                content="❌ Depois de 3 minutos a Riot ainda mostra o ícone antigo. Confira se trocou para o ícone "
+                        "da imagem e clique de novo em **Já troquei o ícone**.")
+        finally:
+            self.checking = False
 
 
 class Lol(commands.Cog):

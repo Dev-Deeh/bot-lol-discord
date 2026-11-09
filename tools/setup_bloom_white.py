@@ -37,7 +37,7 @@ BASE = ("view", "send", "send_threads", "public_threads", "embed", "attach", "ad
         "ext_stickers", "history", "app_cmds", "connect", "speak", "stream", "vad", "activities", "soundboard",
         "change_nick")
 ROLES = [  # do mais alto pro mais baixo (cor em hex)
-    ("🌸 Capitão", 0xFFFFFF, BASE + ("priority", "manage_messages", "mention_everyone", "mute", "deafen", "move",
+    ("👑 Capitão", 0xFFFFFF, BASE + ("priority", "manage_messages", "mention_everyone", "mute", "deafen", "move",
                                      "manage_nick", "manage_roles", "manage_threads", "kick")),
     ("🎓 Coach", 0xCFD8E3, BASE + ("priority", "manage_messages", "mention_everyone", "mute", "deafen", "move")),
     ("🛡️ Titular", 0xA9C4E8, BASE),
@@ -119,10 +119,10 @@ async def main(guild_id):
         C = {}
         read_only = ("send", "add_reactions", "public_threads", "send_threads")
 
-        cat = await api.channel("🌸 BEM-VINDO", 4, overwrites=[
+        cat = await api.channel("💎 BEM-VINDO", 4, overwrites=[
             ow(everyone, allow=("view", "history"), deny=read_only)])
         C["regras"] = await api.channel("📜・regras", 0, cat, [ow(everyone, allow=("view", "history"), deny=read_only)],
-                                        topic="Leia e clique no botão para liberar o servidor 🌸")
+                                        topic="Leia e clique no botão para liberar o servidor")
         C["boas_vindas"] = await api.channel("👋・boas-vindas", 0, cat,
                                              [ow(everyone, allow=("view", "history"), deny=read_only)])
 
@@ -135,7 +135,7 @@ async def main(guild_id):
             C[key] = await api.channel(name, 0, cat, staff_post, topic=topic)
 
         cat = await api.channel("💬 COMUNIDADE", 4)
-        for key, name, topic in (("geral", "💬・geral", "Papo livre 🌸"), ("memes", "😂・memes", None),
+        for key, name, topic in (("geral", "💬・geral", "Papo livre"), ("memes", "😂・memes", None),
                                  ("clipes", "🎬・clipes", "Jogadas, pentas e fails"),
                                  ("duo", "🔎・procurando-duo", "Procure gente pra jogar — use /lfg ou mande aqui")):
             C[key] = await api.channel(name, 0, cat, (), **({"topic": topic} if topic else {}))
@@ -149,7 +149,7 @@ async def main(guild_id):
 
         team_only = [ow(everyone, deny=("view",)), ow(ami, deny=("view", "connect"))] + \
                     [ow(r, allow=("view", "connect")) for r in team]
-        cat = await api.channel("🌸 BLOOM WHITE", 4, overwrites=team_only)
+        cat = await api.channel("💎 BLOOM WHITE", 4, overwrites=team_only)
         for key, name, topic in (("estrategia", "🧠・estratégia", "Composições, rotas, macro"),
                                  ("draft", "📋・draft", "Picks, bans e preparação contra adversários"),
                                  ("vods", "🎥・vods", "Replays e review — mande o link com o que analisar"),
@@ -182,7 +182,7 @@ async def main(guild_id):
             "default_message_notifications": 1, "explicit_content_filter": 2, "verification_level": 1})
 
         # ---------- mensagens
-        embed = {"title": "🌸 Bem-vindo(a) ao Bloom White!", "color": 0xE6EDF5,
+        embed = {"title": "💎 Bem-vindo(a) ao Bloom White!", "color": 0xE6EDF5,
                  "description": "Servidor oficial do time **Bloom White** de League of Legends.\n"
                                 "Antes de entrar, leia as regras:\n\n" + RULES +
                                 "\n\nClique no botão abaixo para **liberar o servidor**. ✨",
@@ -201,7 +201,7 @@ async def main(guild_id):
                            "`/sala convidar @amigo`, `/sala trancar`, `/sala limite`."}]})
         await api.req("POST", f"/channels/{C['avisos']}/messages", json={"embeds": [{
             "title": "📢 O servidor do Bloom White está no ar!", "color": 0xE6EDF5,
-            "description": "Aqui saem os avisos oficiais do time: line-up, scrims, campeonatos e conquistas. 🌸\n"
+            "description": "Aqui saem os avisos oficiais do time: line-up, scrims, campeonatos e conquistas. 💎\n"
                            "Fiquem de olho também em **📅・agenda**."}]})
 
         out = {"guild": guild_id, "roles": R, "channels": C}
