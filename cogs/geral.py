@@ -6,6 +6,8 @@ from discord.ext import commands
 CHANNEL_KINDS = [
     app_commands.Choice(name="Alertas de elo (subiu/caiu)", value="alertas"),
     app_commands.Choice(name="Resumo pós-partida", value="partidas"),
+    app_commands.Choice(name="Notícias oficiais do LoL", value="lolnews"),
+    app_commands.Choice(name="Patch notes", value="patch"),
 ]
 
 
