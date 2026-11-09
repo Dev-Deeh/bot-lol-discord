@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 *.zip
 tools/*_ids.json
+assets/bloom/

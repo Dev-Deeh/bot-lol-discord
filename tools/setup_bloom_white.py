@@ -37,12 +37,12 @@ BASE = ("view", "send", "send_threads", "public_threads", "embed", "attach", "ad
         "ext_stickers", "history", "app_cmds", "connect", "speak", "stream", "vad", "activities", "soundboard",
         "change_nick")
 ROLES = [  # do mais alto pro mais baixo (cor em hex)
-    ("🌸 Capitão", 0xF4A6C8, BASE + ("priority", "manage_messages", "mention_everyone", "mute", "deafen", "move",
+    ("🌸 Capitão", 0xFFFFFF, BASE + ("priority", "manage_messages", "mention_everyone", "mute", "deafen", "move",
                                      "manage_nick", "manage_roles", "manage_threads", "kick")),
-    ("🎓 Coach", 0xB79CF2, BASE + ("priority", "manage_messages", "mention_everyone", "mute", "deafen", "move")),
-    ("🛡️ Titular", 0xEDE7FF, BASE),
-    ("🔁 Reserva", 0x9FB4FF, BASE),
-    ("🤝 Amigos", 0x7DE3C3, BASE),
+    ("🎓 Coach", 0xCFD8E3, BASE + ("priority", "manage_messages", "mention_everyone", "mute", "deafen", "move")),
+    ("🛡️ Titular", 0xA9C4E8, BASE),
+    ("🔁 Reserva", 0x7F93B0, BASE),
+    ("🤝 Amigos", 0xB8E3F5, BASE),
     ("🤖 Bots", 0x5865F2, ()),
 ]
 
@@ -182,7 +182,7 @@ async def main(guild_id):
             "default_message_notifications": 1, "explicit_content_filter": 2, "verification_level": 1})
 
         # ---------- mensagens
-        embed = {"title": "🌸 Bem-vindo(a) ao Bloom White!", "color": 0xF4A6C8,
+        embed = {"title": "🌸 Bem-vindo(a) ao Bloom White!", "color": 0xE6EDF5,
                  "description": "Servidor oficial do time **Bloom White** de League of Legends.\n"
                                 "Antes de entrar, leia as regras:\n\n" + RULES +
                                 "\n\nClique no botão abaixo para **liberar o servidor**. ✨",
@@ -192,7 +192,7 @@ async def main(guild_id):
             "components": [{"type": 1, "components": [{"type": 2, "style": 3, "label": "Li e aceito as regras",
                                                        "emoji": {"name": "✅"}, "custom_id": f"verify:{ami}"}]}]})
         await api.req("POST", f"/channels/{C['comandos']}/messages", json={"embeds": [{
-            "title": "🤖 Comandos do bot", "color": 0xB79CF2,
+            "title": "🤖 Comandos do bot", "color": 0xE6EDF5,
             "description": "**/vincular** `Nick#TAG` — liga sua conta da Riot e ganha o cargo do seu elo\n"
                            "**/perfil** — seu card com elo e últimas partidas\n"
                            "**/partida** — partida ao vivo (scout!)\n"
@@ -200,7 +200,7 @@ async def main(guild_id):
                            "🔒 **Sala privada:** entre em **➕ Criar sala privada** e use "
                            "`/sala convidar @amigo`, `/sala trancar`, `/sala limite`."}]})
         await api.req("POST", f"/channels/{C['avisos']}/messages", json={"embeds": [{
-            "title": "📢 O servidor do Bloom White está no ar!", "color": 0xF4A6C8,
+            "title": "📢 O servidor do Bloom White está no ar!", "color": 0xE6EDF5,
             "description": "Aqui saem os avisos oficiais do time: line-up, scrims, campeonatos e conquistas. 🌸\n"
                            "Fiquem de olho também em **📅・agenda**."}]})
 
