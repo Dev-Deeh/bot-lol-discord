@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS wagers (
 
 CREATE TABLE IF NOT EXISTS temp_voice (channel_id INTEGER PRIMARY KEY, guild_id INTEGER);
 
+CREATE TABLE IF NOT EXISTS private_rooms (channel_id INTEGER PRIMARY KEY, guild_id INTEGER, owner_id INTEGER);
+
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
