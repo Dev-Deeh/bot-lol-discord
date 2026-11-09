@@ -55,17 +55,118 @@ class Servidor(commands.Cog):
     async def cog_load(self):
         self.bot.add_dynamic_items(VerifyButton)
         self.cleanup.start()
+        self.personal_sync.start()
 
     async def cog_unload(self):
         self.cleanup.cancel()
+        self.personal_sync.cancel()
 
     async def my_room(self, interaction: discord.Interaction) -> discord.VoiceChannel:
-        row = await self.bot.db.fetchone("SELECT channel_id FROM private_rooms WHERE guild_id=? AND owner_id=?",
-                                         (interaction.guild_id, interaction.user.id))
-        channel = interaction.guild.get_channel(row["channel_id"]) if row else None
-        if not channel:
-            raise UserError("Você não tem sala privada aberta. Entre no canal **➕ Criar sala privada**.")
-        return channel
+        for table in ("personal_rooms", "private_rooms"):
+            row = await self.bot.db.fetchone(f"SELECT channel_id FROM {table} WHERE guild_id=? AND owner_id=?",
+                                             (interaction.guild_id, interaction.user.id))
+            channel = interaction.guild.get_channel(row["channel_id"]) if row else None
+            if channel:
+                return channel
+        raise UserError("Você não tem sala privada. Ela é criada quando você recebe um cargo do time.")
+
+    # ------------------------------------------------------------ privado fixo de cada jogador
+    # Config do servidor: "privados:cat" = ID da categoria; "privados:roles" = IDs dos cargos do time (vírgula).
+    # Quem tem um cargo do time ganha uma sala "🔒 Nome" só sua; quem perde o cargo perde a sala.
+    async def personal_config(self, guild: discord.Guild):
+        cat_id = await self.bot.db.get_config(guild.id, "privados:cat")
+        roles = await self.bot.db.get_config(guild.id, "privados:roles")
+        if not cat_id or not roles:
+            return None, set()
+        return guild.get_channel(int(cat_id)), {int(r) for r in roles.split(",") if r}
+
+    async def sync_member(self, member: discord.Member, category, team_roles: set):
+        if member.bot or category is None:
+            return
+        row = await self.bot.db.fetchone("SELECT channel_id FROM personal_rooms WHERE guild_id=? AND owner_id=?",
+                                         (member.guild.id, member.id))
+        room = member.guild.get_channel(row["channel_id"]) if row else None
+        is_team = any(r.id in team_roles for r in member.roles)
+        if is_team and room is None:
+            overwrites = {}
+            for target, ow in category.overwrites.items():
+                ow = discord.PermissionOverwrite(**dict(ow))
+                if ow.connect:  # o time vê a sala, mas só entra quem o dono chamar
+                    ow.update(connect=False)
+                overwrites[target] = ow
+            everyone = overwrites.get(member.guild.default_role, discord.PermissionOverwrite())
+            everyone.update(connect=False)
+            overwrites[member.guild.default_role] = everyone
+            overwrites[member] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, stream=True,
+                                                             move_members=True, manage_channels=True)
+            overwrites[member.guild.me] = discord.PermissionOverwrite(view_channel=True, connect=True,
+                                                                      manage_channels=True, move_members=True)
+            try:
+                room = await member.guild.create_voice_channel(f"🔒 {member.display_name}"[:100], category=category,
+                                                               overwrites=overwrites, reason="Privado do jogador")
+                await self.bot.db.execute("INSERT OR REPLACE INTO personal_rooms (channel_id, guild_id, owner_id) "
+                                          "VALUES (?,?,?)", (room.id, member.guild.id, member.id))
+                log.info("Privado criado para %s", member)
+            except discord.HTTPException as e:
+                log.warning("Falha ao criar privado de %s: %s", member, e)
+        elif not is_team and row:
+            await self.bot.db.execute("DELETE FROM personal_rooms WHERE channel_id=?", (row["channel_id"],))
+            if room:
+                try:
+                    await room.delete(reason="Saiu do time")
+                except discord.HTTPException:
+                    pass
+
+    async def sync_guild(self, guild: discord.Guild):
+        category, team_roles = await self.personal_config(guild)
+        if category is None:
+            return
+        for member in guild.members:
+            await self.sync_member(member, category, team_roles)
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if before.roles != after.roles:
+            category, team_roles = await self.personal_config(after.guild)
+            await self.sync_member(after, category, team_roles)
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        """Cargo automático pra quem entra (config "autorole")."""
+        if member.bot:
+            return
+        role_id = await self.bot.db.get_config(member.guild.id, "autorole")
+        role = member.guild.get_role(int(role_id)) if role_id else None
+        if role:
+            try:
+                await member.add_roles(role, reason="Cargo automático de entrada")
+            except discord.HTTPException as e:
+                log.warning("Não consegui dar o cargo automático: %s", e)
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        row = await self.bot.db.fetchone("SELECT channel_id FROM personal_rooms WHERE guild_id=? AND owner_id=?",
+                                         (member.guild.id, member.id))
+        if row:
+            await self.bot.db.execute("DELETE FROM personal_rooms WHERE channel_id=?", (row["channel_id"],))
+            room = member.guild.get_channel(row["channel_id"])
+            if room:
+                try:
+                    await room.delete(reason="Saiu do servidor")
+                except discord.HTTPException:
+                    pass
+
+    @tasks.loop(minutes=30)
+    async def personal_sync(self):
+        for guild in self.bot.guilds:
+            try:
+                await self.sync_guild(guild)
+            except Exception:
+                log.exception("Falha ao sincronizar privados de %s", guild)
+
+    @personal_sync.before_loop
+    async def before_personal_sync(self):
+        await self.bot.wait_until_ready()
 
     # ------------------------------------------------------------ criar / apagar
     @commands.Cog.listener()
@@ -154,13 +255,22 @@ class Servidor(commands.Cog):
     @sala.command(name="abrir", description="Deixa qualquer membro verificado entrar")
     async def sala_abrir(self, interaction: discord.Interaction):
         room = await self.my_room(interaction)
-        await room.set_permissions(interaction.guild.default_role, connect=None)
+        overwrites = dict(room.overwrites)
+        for target, ow in overwrites.items():
+            if isinstance(target, discord.Role):
+                ow.update(connect=None)
+        await room.edit(overwrites=overwrites)
         await interaction.response.send_message("🔓 Sala aberta pra todos.", ephemeral=True)
 
     @sala.command(name="trancar", description="Volta a deixar só os convidados entrarem")
     async def sala_trancar(self, interaction: discord.Interaction):
         room = await self.my_room(interaction)
-        await room.set_permissions(interaction.guild.default_role, connect=False)
+        overwrites = dict(room.overwrites)
+        for target, ow in overwrites.items():
+            if isinstance(target, discord.Role) and target != interaction.guild.me.top_role:
+                ow.update(connect=False)
+        overwrites.setdefault(interaction.guild.default_role, discord.PermissionOverwrite(connect=False))
+        await room.edit(overwrites=overwrites)
         await interaction.response.send_message("🔒 Sala trancada.", ephemeral=True)
 
     @sala.command(name="limite", description="Limite de pessoas na sala (0 = sem limite)")

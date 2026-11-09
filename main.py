@@ -47,7 +47,9 @@ class Tree(app_commands.CommandTree):
 
 class LolBot(commands.Bot):
     def __init__(self):
-        intents = discord.Intents.default()  # nenhum intent privilegiado é necessário
+        intents = discord.Intents.default()
+        # "Server Members Intent" (ligar no Developer Portal): necessário para criar o privado de cada jogador
+        intents.members = True
         # max_messages=None: não guarda mensagens em memória (o bot não precisa) — economiza RAM
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, tree_cls=Tree,
                          max_messages=None)
