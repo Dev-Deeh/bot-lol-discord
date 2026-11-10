@@ -1,8 +1,10 @@
 """Riot API: perfil, partida ao vivo, vincular conta, ranking, alertas de elo e resumo pós-partida — tudo em cards."""
 import asyncio
+import io
 import logging
 import random
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -127,12 +129,23 @@ class Lol(commands.Cog):
         embed = discord.Embed(
             title="🔐 Verificação de conta",
             description=(f"Pra provar que **{nice_id}** é sua, troque o **ícone de perfil** no cliente do LoL "
-                         f"para o ícone abaixo (é um dos ícones grátis, todo mundo tem).\n\n"
-                         f"Depois clique em **Já troquei o ícone**. Você tem 15 minutos."),
+                         f"para o ícone abaixo (**ícone nº {icon}**, um dos ícones grátis que todo mundo tem).\n\n"
+                         f"Depois clique em **Já troquei o ícone**. Você tem 30 minutos."),
             color=0xC89B3C)
-        embed.set_image(url=self.bot.ddragon.profile_icon(icon))
+        # manda a imagem como arquivo: link externo às vezes não carrega no Discord
+        url = self.bot.ddragon.profile_icon(icon)
+        file = None
+        try:
+            async with self.bot.session.get(url) as r:
+                if r.status == 200:
+                    file = discord.File(io.BytesIO(await r.read()), filename="icone.png")
+        except aiohttp.ClientError:
+            pass
+        embed.set_image(url="attachment://icone.png" if file else url)
+        kwargs = {"file": file} if file else {}
         await interaction.followup.send(
-            embed=embed, view=VerifyView(self, interaction.user.id, acc["puuid"], nice_id, icon), ephemeral=True)
+            embed=embed, view=VerifyView(self, interaction.user.id, acc["puuid"], nice_id, icon), ephemeral=True,
+            **kwargs)
 
     @app_commands.command(name="desvincular", description="Remove o vínculo da sua conta da Riot")
     @app_commands.guild_only()

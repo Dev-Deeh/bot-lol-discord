@@ -9,7 +9,8 @@ sudo -u bot git log --oneline -1
 sudo -u bot .venv/bin/python tools/set_config.py bot.db "$GUILD" \
   privados:cat=1569480059251593333 \
   privados:roles=1569318560042455206,1569484939920154775 \
-  autorole=1569318562756034662
+  autorole=1569318562756034662 \
+  tierlist:cat=1569502305328566485
 systemctl restart bot-lol
 sleep 45
 systemctl is-active bot-lol

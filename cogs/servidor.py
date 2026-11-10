@@ -95,10 +95,11 @@ class Servidor(commands.Cog):
     async def _sync_member(self, member: discord.Member, category, team_roles: set):
         if member.bot or category is None:
             return
+        is_team = any(r.id in team_roles for r in member.roles)
+        await self._sync_tier(member, is_team)
         row = await self.bot.db.fetchone("SELECT channel_id FROM personal_rooms WHERE guild_id=? AND owner_id=?",
                                          (member.guild.id, member.id))
         room = member.guild.get_channel(row["channel_id"]) if row else None
-        is_team = any(r.id in team_roles for r in member.roles)
         if is_team and room is None:
             overwrites = {}
             for target, ow in category.overwrites.items():
@@ -129,6 +130,49 @@ class Servidor(commands.Cog):
                 except discord.HTTPException:
                     pass
 
+    # ------------------------------------------------------------ canal de tier list de cada jogador
+    # Config "tierlist:cat" = ID da categoria. Mesmos cargos dos privados. Só o dono posta; o time lê e reage.
+    async def tier_category(self, guild: discord.Guild):
+        cat_id = await self.bot.db.get_config(guild.id, "tierlist:cat")
+        return guild.get_channel(int(cat_id)) if cat_id else None
+
+    async def _sync_tier(self, member: discord.Member, is_team: bool):
+        tcat = await self.tier_category(member.guild)
+        if tcat is None:
+            return
+        row = await self.bot.db.fetchone("SELECT channel_id FROM tier_channels WHERE guild_id=? AND owner_id=?",
+                                         (member.guild.id, member.id))
+        channel = member.guild.get_channel(row["channel_id"]) if row else None
+        if is_team and channel is None:
+            overwrites = {}
+            for target, ow in tcat.overwrites.items():
+                ow = discord.PermissionOverwrite(**dict(ow))
+                if isinstance(target, discord.Role):  # o time lê e reage, mas não escreve no canal dos outros
+                    ow.update(send_messages=False, create_public_threads=False, send_messages_in_threads=False)
+                overwrites[target] = ow
+            overwrites[member] = discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True,
+                                                             embed_links=True, manage_messages=True,
+                                                             read_message_history=True)
+            overwrites[member.guild.me] = discord.PermissionOverwrite(view_channel=True, send_messages=True,
+                                                                      manage_channels=True)
+            try:
+                channel = await member.guild.create_text_channel(
+                    f"📝・{member.display_name}"[:100], category=tcat, overwrites=overwrites,
+                    topic=f"Tier list de {member.display_name}. Só {member.display_name} posta aqui; o time comenta "
+                          f"com reações.", reason="Tier list do jogador")
+                await self.bot.db.execute("INSERT OR REPLACE INTO tier_channels (channel_id, guild_id, owner_id) "
+                                          "VALUES (?,?,?)", (channel.id, member.guild.id, member.id))
+                log.info("Canal de tier list criado para %s", member)
+            except discord.HTTPException as e:
+                log.warning("Falha ao criar tier list de %s: %s", member, e)
+        elif not is_team and row:
+            await self.bot.db.execute("DELETE FROM tier_channels WHERE channel_id=?", (row["channel_id"],))
+            if channel:
+                try:
+                    await channel.delete(reason="Saiu do time")
+                except discord.HTTPException:
+                    pass
+
     async def sync_guild(self, guild: discord.Guild):
         category, team_roles = await self.personal_config(guild)
         if category is None:
@@ -136,6 +180,17 @@ class Servidor(commands.Cog):
         async with self.guild_lock(guild.id):
             for member in guild.members:
                 await self._sync_member(member, category, team_roles)
+            # faxina da tier list: canais que não são de alguém do time
+            tcat = await self.tier_category(guild)
+            if tcat:
+                rows = await self.bot.db.fetchall("SELECT channel_id FROM tier_channels WHERE guild_id=?", (guild.id,))
+                tracked = {r["channel_id"] for r in rows}
+                for channel in tcat.text_channels:
+                    if channel.id not in tracked:
+                        try:
+                            await channel.delete(reason="Tier list sem dono do time")
+                        except discord.HTTPException:
+                            pass
             # faxina: qualquer sala na categoria que não seja o privado registrado de alguém do time é apagada
             rows = await self.bot.db.fetchall("SELECT channel_id FROM personal_rooms WHERE guild_id=?", (guild.id,))
             tracked = {r["channel_id"] for r in rows}
