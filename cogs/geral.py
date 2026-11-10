@@ -8,6 +8,8 @@ CHANNEL_KINDS = [
     app_commands.Choice(name="Resumo pós-partida", value="partidas"),
     app_commands.Choice(name="Notícias oficiais do LoL", value="lolnews"),
     app_commands.Choice(name="Patch notes", value="patch"),
+    app_commands.Choice(name="Jogos grátis", value="gratis"),
+    app_commands.Choice(name="Promoções da Steam", value="promos"),
 ]
 
 

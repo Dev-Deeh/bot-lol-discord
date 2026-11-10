@@ -10,7 +10,9 @@ sudo -u bot .venv/bin/python tools/set_config.py bot.db "$GUILD" \
   privados:cat=1569480059251593333 \
   privados:roles=1569318560042455206,1569484939920154775 \
   autorole=1569318562756034662 \
-  tierlist:cat=1569502305328566485
+  tierlist:cat=1569502305328566485 \
+  canal:gratis=1569508627415306310 \
+  canal:promos=1569508628807942217
 systemctl restart bot-lol
 sleep 45
 systemctl is-active bot-lol
