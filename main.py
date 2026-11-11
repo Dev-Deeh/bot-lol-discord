@@ -18,7 +18,8 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bot")
 
-EXTENSIONS = ["cogs.geral", "cogs.lol", "cogs.servidor", "cogs.noticias", "cogs.promos", "cogs.tierlist"]
+EXTENSIONS = ["cogs.geral", "cogs.lol", "cogs.servidor", "cogs.noticias", "cogs.promos", "cogs.tierlist",
+              "cogs.scout"]
 
 
 class Tree(app_commands.CommandTree):

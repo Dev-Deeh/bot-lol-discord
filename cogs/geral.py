@@ -31,6 +31,8 @@ class Geral(commands.Cog):
             "**/perfil** — card com elo, winrate e campeões mais jogados\n"
             "**/partida** — card da partida ao vivo, com o elo dos 10 jogadores\n"
             "**/ranking** — ranking de elo do servidor\n"
+            "**/scout** — cole a multibusca do OP.GG do adversário e o bot sugere os bans\n"
+            "**/tierlist criar** — monte sua tier list com os ícones dos campeões\n"
             "**/desvincular** — remove sua conta\n\n"
             "🔔 **Automático:** alerta quando alguém sobe/cai de elo e card de cada ranked jogada.\n"
             "⚙️ **Admins:** `/config canal` escolhe onde os avisos aparecem."))
