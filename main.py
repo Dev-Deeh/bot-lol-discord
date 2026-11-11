@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("bot")
 
 EXTENSIONS = ["cogs.geral", "cogs.lol", "cogs.servidor", "cogs.noticias", "cogs.promos", "cogs.tierlist",
-              "cogs.scout"]
+              "cogs.scout", "cogs.avisos"]
 
 
 class Tree(app_commands.CommandTree):
