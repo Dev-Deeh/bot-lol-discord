@@ -18,7 +18,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bot")
 
-EXTENSIONS = ["cogs.geral", "cogs.lol", "cogs.servidor", "cogs.noticias", "cogs.promos"]
+EXTENSIONS = ["cogs.geral", "cogs.lol", "cogs.servidor", "cogs.noticias", "cogs.promos", "cogs.tierlist"]
 
 
 class Tree(app_commands.CommandTree):
@@ -50,6 +50,8 @@ class LolBot(commands.Bot):
         intents = discord.Intents.default()
         # "Server Members Intent" (ligar no Developer Portal): necessário para criar o privado de cada jogador
         intents.members = True
+        # "Message Content Intent": necessário pra ler e organizar as tier lists postadas
+        intents.message_content = True
         # max_messages=None: não guarda mensagens em memória (o bot não precisa) — economiza RAM
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, tree_cls=Tree,
                          max_messages=None)

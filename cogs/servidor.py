@@ -46,6 +46,13 @@ class VerifyButton(discord.ui.DynamicItem[discord.ui.Button], template=r"verify:
         await interaction.response.send_message(f"✅ Bem-vindo(a)! O servidor foi liberado pra você.", ephemeral=True)
 
 
+def owner_overwrite() -> discord.PermissionOverwrite:
+    """Dono da sala privada: entra, fala, transmite e controla quem está lá (arrastar, desconectar, mutar)."""
+    return discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, stream=True,
+                                       use_voice_activation=True, move_members=True, mute_members=True,
+                                       deafen_members=True, manage_channels=True)
+
+
 # ================================================================== salas privadas
 class Servidor(commands.Cog):
     sala = app_commands.Group(name="sala", description="Gerencie sua sala de voz privada", guild_only=True)
@@ -110,8 +117,7 @@ class Servidor(commands.Cog):
             everyone = overwrites.get(member.guild.default_role, discord.PermissionOverwrite())
             everyone.update(connect=False)
             overwrites[member.guild.default_role] = everyone
-            overwrites[member] = discord.PermissionOverwrite(view_channel=True, connect=True, speak=True, stream=True,
-                                                             move_members=True, manage_channels=True)
+            overwrites[member] = owner_overwrite()
             overwrites[member.guild.me] = discord.PermissionOverwrite(view_channel=True, connect=True,
                                                                       manage_channels=True, move_members=True)
             try:
@@ -122,6 +128,12 @@ class Servidor(commands.Cog):
                 log.info("Privado criado para %s", member)
             except discord.HTTPException as e:
                 log.warning("Falha ao criar privado de %s: %s", member, e)
+        elif is_team and room is not None:
+            if room.overwrites_for(member) != owner_overwrite():
+                try:
+                    await room.set_permissions(member, overwrite=owner_overwrite(), reason="Permissões do dono")
+                except discord.HTTPException:
+                    pass
         elif not is_team and row:
             await self.bot.db.execute("DELETE FROM personal_rooms WHERE channel_id=?", (row["channel_id"],))
             if room:
