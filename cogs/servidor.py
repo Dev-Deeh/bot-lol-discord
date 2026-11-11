@@ -82,12 +82,28 @@ class Servidor(commands.Cog):
     # ------------------------------------------------------------ privado fixo de cada jogador
     # Config do servidor: "privados:cat" = ID da categoria; "privados:roles" = IDs dos cargos do time (vírgula).
     # Quem tem um cargo do time ganha uma sala "🔒 Nome" só sua; quem perde o cargo perde a sala.
-    async def personal_config(self, guild: discord.Guild):
+    # Vários times: config "times" = "cargo:categoria_privados:categoria_tierlist" separados por ";".
+    async def teams(self, guild: discord.Guild) -> list[tuple]:
+        raw = await self.bot.db.get_config(guild.id, "times")
+        out = []
+        if raw:
+            for part in str(raw).split(";"):
+                bits = part.split(":")
+                if len(bits) == 3 and all(bits):
+                    out.append((int(bits[0]), guild.get_channel(int(bits[1])), guild.get_channel(int(bits[2]))))
+            return [t for t in out if t[1] is not None]
         cat_id = await self.bot.db.get_config(guild.id, "privados:cat")
         roles = await self.bot.db.get_config(guild.id, "privados:roles")
-        if not cat_id or not roles:
-            return None, set()
-        return guild.get_channel(int(cat_id)), {int(r) for r in roles.split(",") if r}
+        category = guild.get_channel(int(cat_id)) if cat_id else None
+        if category is None or not roles:
+            return []
+        tcat = await self.tier_category(guild)
+        return [(int(r), category, tcat) for r in str(roles).split(",") if r]
+
+    @staticmethod
+    def team_of(member: discord.Member, teams):
+        ids = {r.id for r in member.roles}
+        return next((t for t in teams if t[0] in ids), None)
 
     def guild_lock(self, guild_id: int) -> asyncio.Lock:
         # uma sincronização por vez em cada servidor (evita criar a mesma sala duas vezes)
@@ -95,18 +111,27 @@ class Servidor(commands.Cog):
             self.locks[guild_id] = asyncio.Lock()
         return self.locks[guild_id]
 
-    async def sync_member(self, member: discord.Member, category, team_roles: set):
+    async def sync_member(self, member: discord.Member, teams):
         async with self.guild_lock(member.guild.id):
-            await self._sync_member(member, category, team_roles)
+            await self._sync_member(member, teams)
 
-    async def _sync_member(self, member: discord.Member, category, team_roles: set):
-        if member.bot or category is None:
+    async def _sync_member(self, member: discord.Member, teams):
+        if member.bot or not teams:
             return
-        is_team = any(r.id in team_roles for r in member.roles)
-        await self._sync_tier(member, is_team)
+        team = self.team_of(member, teams)
+        is_team = team is not None
+        category = team[1] if team else None
+        await self._sync_tier(member, team[2] if team else None)
         row = await self.bot.db.fetchone("SELECT channel_id FROM personal_rooms WHERE guild_id=? AND owner_id=?",
                                          (member.guild.id, member.id))
         room = member.guild.get_channel(row["channel_id"]) if row else None
+        if is_team and room is not None and room.category_id != category.id:  # trocou de time: sala nova no time novo
+            try:
+                await room.delete(reason="Trocou de time")
+            except discord.HTTPException:
+                pass
+            await self.bot.db.execute("DELETE FROM personal_rooms WHERE channel_id=?", (row["channel_id"],))
+            room, row = None, None
         if is_team and room is None:
             overwrites = {}
             for target, ow in category.overwrites.items():
@@ -148,25 +173,35 @@ class Servidor(commands.Cog):
         cat_id = await self.bot.db.get_config(guild.id, "tierlist:cat")
         return guild.get_channel(int(cat_id)) if cat_id else None
 
-    async def _sync_tier(self, member: discord.Member, is_team: bool):
-        tcat = await self.tier_category(member.guild)
-        if tcat is None:
-            return
+    @staticmethod
+    def tier_overwrites(member: discord.Member, tcat):
+        overwrites = {}
+        for target, ow in tcat.overwrites.items():
+            ow = discord.PermissionOverwrite(**dict(ow))
+            if isinstance(target, discord.Role):  # o time lê e reage, mas não escreve no canal dos outros
+                ow.update(send_messages=False, create_public_threads=False, send_messages_in_threads=False)
+            overwrites[target] = ow
+        overwrites[member] = discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True,
+                                                         embed_links=True, manage_messages=True,
+                                                         read_message_history=True)
+        overwrites[member.guild.me] = discord.PermissionOverwrite(view_channel=True, send_messages=True,
+                                                                  manage_channels=True)
+        return overwrites
+
+    async def _sync_tier(self, member: discord.Member, tcat):
+        """tcat = categoria de tier list do time do jogador (None = não é de nenhum time)."""
+        is_team = tcat is not None
         row = await self.bot.db.fetchone("SELECT channel_id FROM tier_channels WHERE guild_id=? AND owner_id=?",
                                          (member.guild.id, member.id))
         channel = member.guild.get_channel(row["channel_id"]) if row else None
-        if is_team and channel is None:
-            overwrites = {}
-            for target, ow in tcat.overwrites.items():
-                ow = discord.PermissionOverwrite(**dict(ow))
-                if isinstance(target, discord.Role):  # o time lê e reage, mas não escreve no canal dos outros
-                    ow.update(send_messages=False, create_public_threads=False, send_messages_in_threads=False)
-                overwrites[target] = ow
-            overwrites[member] = discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True,
-                                                             embed_links=True, manage_messages=True,
-                                                             read_message_history=True)
-            overwrites[member.guild.me] = discord.PermissionOverwrite(view_channel=True, send_messages=True,
-                                                                      manage_channels=True)
+        if is_team and channel is not None and channel.category_id != tcat.id:  # trocou de time: leva a tier list
+            try:
+                await channel.edit(category=tcat, overwrites=self.tier_overwrites(member, tcat),
+                                   reason="Trocou de time")
+            except discord.HTTPException as e:
+                log.warning("Falha ao mover tier list de %s: %s", member, e)
+        elif is_team and channel is None:
+            overwrites = self.tier_overwrites(member, tcat)
             try:
                 channel = await member.guild.create_text_channel(
                     f"📝・{member.display_name}"[:100], category=tcat, overwrites=overwrites,
@@ -186,15 +221,14 @@ class Servidor(commands.Cog):
                     pass
 
     async def sync_guild(self, guild: discord.Guild):
-        category, team_roles = await self.personal_config(guild)
-        if category is None:
+        teams = await self.teams(guild)
+        if not teams:
             return
         async with self.guild_lock(guild.id):
             for member in guild.members:
-                await self._sync_member(member, category, team_roles)
+                await self._sync_member(member, teams)
             # faxina da tier list: canais que não são de alguém do time
-            tcat = await self.tier_category(guild)
-            if tcat:
+            for tcat in {t[2].id: t[2] for t in teams if t[2]}.values():
                 rows = await self.bot.db.fetchall("SELECT channel_id FROM tier_channels WHERE guild_id=?", (guild.id,))
                 tracked = {r["channel_id"] for r in rows}
                 for channel in tcat.text_channels:
@@ -206,7 +240,7 @@ class Servidor(commands.Cog):
             # faxina: qualquer sala na categoria que não seja o privado registrado de alguém do time é apagada
             rows = await self.bot.db.fetchall("SELECT channel_id FROM personal_rooms WHERE guild_id=?", (guild.id,))
             tracked = {r["channel_id"] for r in rows}
-            for channel in category.voice_channels:
+            for channel in [c for cat in {t[1].id: t[1] for t in teams}.values() for c in cat.voice_channels]:
                 if channel.id not in tracked:
                     try:
                         await channel.delete(reason="Privado sem dono do time")
@@ -217,8 +251,7 @@ class Servidor(commands.Cog):
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         if before.roles != after.roles:
-            category, team_roles = await self.personal_config(after.guild)
-            await self.sync_member(after, category, team_roles)
+            await self.sync_member(after, await self.teams(after.guild))
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):

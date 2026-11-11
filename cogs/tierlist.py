@@ -75,7 +75,8 @@ class TierList(commands.Cog):
         return self.bot.get_channel(row["channel_id"]) if row else None
 
     async def subtitle(self, member: discord.Member) -> str:
-        parts = [r.name.split(" ", 1)[-1] for r in member.roles if r.name in POSITION_ROLES]
+        parts = [r.name.split(" ", 1)[-1] for r in sorted(member.roles, key=lambda r: -r.position)
+                 if r.name.startswith(POSITION_ROLES)]
         acc = await self.bot.db.fetchone("SELECT tier, rank, lp FROM accounts WHERE guild_id=? AND user_id=?",
                                          (member.guild.id, member.id))
         if acc and acc["tier"]:
@@ -85,7 +86,9 @@ class TierList(commands.Cog):
     def base_embed(self, member: discord.Member, subtitle: str) -> discord.Embed:
         e = discord.Embed(title=f"📝 Tier list de {member.display_name}", description=subtitle or None, color=COLOR)
         e.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-        e.set_footer(text="Bloom White • reaja pra comentar")
+        team = next((r.name.split(" ", 1)[-1] for r in member.roles if r.name.endswith(("Bloom White", "Bloom Red"))),
+                    "Bloom")
+        e.set_footer(text=f"{team} • reaja pra comentar")
         return e
 
     async def post_image(self, channel, member: discord.Member, data: bytes, ext: str, when=None):

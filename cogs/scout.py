@@ -8,6 +8,7 @@ Sugestão de ban: campeão que o jogador joga muito nas últimas partidas e/ou c
 import asyncio
 import logging
 import re
+import time
 from collections import Counter, defaultdict
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -22,6 +23,7 @@ from core.util import UserError
 
 log = logging.getLogger("bot.scout")
 RECENT = 10                      # ranqueadas analisadas por jogador
+CACHE_TTL = 20 * 60              # resultado de cada jogador vale 20 min (a chave da Riot permite ~100 consultas/2 min)
 ROLE_PT = {"TOP": "Top", "JUNGLE": "Jungle", "MIDDLE": "Mid", "BOTTOM": "ADC", "UTILITY": "Suporte"}
 
 
@@ -164,6 +166,26 @@ def scout_embed(players: list[dict], dd) -> discord.Embed:
 class Scout(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.lock = asyncio.Lock()       # um scout por vez: dois juntos estouram o limite da chave e travam os dois
+        self.cache: dict[tuple[str, str], tuple[float, dict]] = {}
+        self.waiting = 0
+
+    async def player(self, name: str, tag: str) -> dict:
+        key = (name.lower(), tag.lower())
+        hit = self.cache.get(key)
+        if hit and time.monotonic() - hit[0] < CACHE_TTL:
+            return hit[1]
+        try:
+            res = await analyze_player(self.bot.riot, name, tag)
+        except RiotError as e:
+            if e.status in (0, 401, 403):
+                raise
+            return {"riot_id": f"{name}#{tag}", "error": f"erro da Riot ({e.status})"}
+        if not res.get("error"):
+            self.cache[key] = (time.monotonic(), res)
+            if len(self.cache) > 100:
+                self.cache.pop(next(iter(self.cache)))
+        return res
 
     @app_commands.command(name="scout", description="Analisa um time adversário (link da multibusca do OP.GG) e sugere bans")
     @app_commands.describe(jogadores="Link da multibusca do OP.GG, texto do saguão ou nicks (Nick#TAG) separados por vírgula")
@@ -172,24 +194,34 @@ class Scout(commands.Cog):
         if not players:
             raise UserError("Não achei nenhum jogador. Cole o link da multibusca do OP.GG ou os nicks no formato Nick#TAG.")
         await interaction.response.defer(thinking=True)
-        await self.bot.ddragon.ensure()
-        results = []
-        for name, tag in players:  # um por vez: respeita o limite da API
+
+        async def status(text):
             try:
-                results.append(await analyze_player(self.bot.riot, name, tag))
-            except RiotError as e:
-                if e.status in (0, 401, 403):
-                    raise
-                results.append({"riot_id": f"{name}#{tag}", "error": f"erro da Riot ({e.status})"})
+                await interaction.edit_original_response(content=text)
+            except discord.HTTPException:
+                pass
+
+        if self.lock.locked():
+            self.waiting += 1
+            await status(f"⏳ Na fila: tem outro scout rodando ({self.waiting} esperando). Já começo o seu.")
+        async with self.lock:
+            if self.waiting:
+                self.waiting -= 1
+            await self.bot.ddragon.ensure()
+            results = []
+            for i, (name, tag) in enumerate(players, 1):  # um por vez: respeita o limite da API
+                await status(f"🔎 Analisando {name} ({i}/{len(players)})...")
+                results.append(await self.player(name, tag))
+        await status("🎨 Montando o card...")
         cands = ban_suggestions(results, self.bot.ddragon)
         must, extra = split_bans(cands)
         try:
             img = await render_scout(self.bot.cards, results, must, extra, RECENT)
         except Exception:
             log.exception("Falha ao desenhar o card do scout; mandando em texto")
-            await interaction.followup.send(embed=scout_embed(results, self.bot.ddragon))
+            await interaction.edit_original_response(content=None, embed=scout_embed(results, self.bot.ddragon))
             return
-        await interaction.followup.send(file=discord.File(img, filename="scout.jpg"))
+        await interaction.edit_original_response(content=None, attachments=[discord.File(img, filename="scout.jpg")])
 
 
 async def setup(bot):
