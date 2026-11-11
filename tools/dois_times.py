@@ -3,7 +3,7 @@
 - Área comum (todos os times): 📌 BLOOM (regras, avisos), 🌍 LEAGUE, 🎁 JOGOS & PROMOS, 🔊 BLOOM · VOZ (música, AFK),
   🤝 CONVIDADOS e 🎓 STAFF (capitães e coaches dos dois times).
 - Cada time só vê a própria área: TIME, COMPETITIVO, TIER LIST, VOZ e PRIVADOS.
-- Cria os cargos 🔴 Bloom Red, 👑 Capitão Red e 🎓 Coach Red; Capitão e Coach atuais viram "White".
+- Cria os cargos 🔴 Bloom Red, 👑 Capitão Bloom Red e 🎓 Coach Bloom Red; Capitão e Coach atuais viram "White".
 
 Uso:  python tools/dois_times.py            (só mostra o que vai fazer)
       python tools/dois_times.py --aplicar  (aplica)
@@ -24,11 +24,11 @@ RED = 0xE84057
 
 # categoria do White -> (novo nome White, nome Red, canais a copiar pro Red)
 TEAM_CATS = {
-    "💬 TIME": ("💎 WHITE · TIME", "🔴 RED · TIME", True),
-    "🏆 COMPETITIVO": ("💎 WHITE · COMPETITIVO", "🔴 RED · COMPETITIVO", True),
-    "📝 TIER LIST": ("💎 WHITE · TIER LIST", "🔴 RED · TIER LIST", False),
-    "🔊 VOZ": ("💎 WHITE · VOZ", "🔴 RED · VOZ", True),
-    "🔒 PRIVADOS": ("💎 WHITE · PRIVADOS", "🔴 RED · PRIVADOS", False),
+    "💬 TIME": ("💎 BLOOM WHITE · TIME", "🔴 BLOOM RED · TIME", True),
+    "🏆 COMPETITIVO": ("💎 BLOOM WHITE · COMPETITIVO", "🔴 BLOOM RED · COMPETITIVO", True),
+    "📝 TIER LIST": ("💎 BLOOM WHITE · TIER LIST", "🔴 BLOOM RED · TIER LIST", False),
+    "🔊 VOZ": ("💎 BLOOM WHITE · VOZ", "🔴 BLOOM RED · VOZ", True),
+    "🔒 PRIVADOS": ("💎 BLOOM WHITE · PRIVADOS", "🔴 BLOOM RED · PRIVADOS", False),
 }
 SHARED_CATS = ["💎 BLOOM WHITE", "🌍 LEAGUE", "🎁 JOGOS & PROMOS", "🤝 CONVIDADOS", "🎓 STAFF"]
 SHARED_VOICE = "🔊 BLOOM · VOZ"
@@ -59,9 +59,9 @@ async def main():
 
         # ------------------------------------------------ cargos
         print("Cargos")
-        cap, coach, bw = roles.get("👑 Capitão") or roles["👑 Capitão White"], \
-            roles.get("🎓 Coach") or roles["🎓 Coach White"], roles["💎 Bloom White"]
-        for r, new in ((cap, "👑 Capitão White"), (coach, "🎓 Coach White")):
+        cap, coach, bw = roles.get("👑 Capitão") or roles["👑 Capitão Bloom White"], \
+            roles.get("🎓 Coach") or roles["🎓 Coach Bloom White"], roles["💎 Bloom White"]
+        for r, new in ((cap, "👑 Capitão Bloom White"), (coach, "🎓 Coach Bloom White")):
             if r["name"] != new:
                 log("renomear", r["name"], "->", new)
                 await call("PATCH", f"/guilds/{g}/roles/{r['id']}", json={"name": new})
@@ -76,8 +76,8 @@ async def main():
             return r["id"]
 
         br = await make_role("🔴 Bloom Red", bw, RED)
-        cap_r = await make_role("👑 Capitão Red", cap, RED)
-        coach_r = await make_role("🎓 Coach Red", coach, 0xF2A3AE)
+        cap_r = await make_role("👑 Capitão Bloom Red", cap, RED)
+        coach_r = await make_role("🎓 Coach Bloom Red", coach, 0xF2A3AE)
         mapping = {bw["id"]: br, cap["id"]: cap_r, coach["id"]: coach_r}
 
         if APPLY:  # ordem: bot, capitães, coaches, times, resto como estava
@@ -126,7 +126,7 @@ async def main():
                 if ch.get("parent_id") == cat["id"] and ch["id"] not in {ids["channels"][k] for k in TO_WHITE_TIME}:
                     await share(ch)
 
-        white_voice = cats.get("🔊 VOZ") or cats.get("💎 WHITE · VOZ")
+        white_voice = cats.get("🔊 VOZ") or cats.get("💎 BLOOM WHITE · VOZ")
         sv = cats.get(SHARED_VOICE)
         if sv:
             sv_id = sv["id"]
@@ -188,10 +188,10 @@ async def main():
         if APPLY:
             await api.req("PATCH", f"/guilds/{g}/channels",
                           json=[{"id": cid, "position": i} for i, cid in enumerate(final)])
-            ids["roles"].update({"🔴 Bloom Red": br, "👑 Capitão Red": cap_r, "🎓 Coach Red": coach_r})
+            ids["roles"].update({"🔴 Bloom Red": br, "👑 Capitão Bloom Red": cap_r, "🎓 Coach Bloom Red": coach_r})
             fresh = {c["name"]: c["id"] for c in await api.req("GET", f"/guilds/{g}/channels") if c["type"] == 4}
-            ids["channels"].update({"cat_privados_red": fresh["🔴 RED · PRIVADOS"],
-                                    "cat_tierlist_red": fresh["🔴 RED · TIER LIST"], "cat_voz_comum": sv_id})
+            ids["channels"].update({"cat_privados_red": fresh["🔴 BLOOM RED · PRIVADOS"],
+                                    "cat_tierlist_red": fresh["🔴 BLOOM RED · TIER LIST"], "cat_voz_comum": sv_id})
             IDS_FILE.write_text(json.dumps(ids, ensure_ascii=False, indent=2), encoding="utf-8")
             print("Pronto. IDs salvos em", IDS_FILE.name)
 

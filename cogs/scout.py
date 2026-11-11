@@ -10,6 +10,7 @@ import logging
 import re
 import time
 from collections import Counter, defaultdict
+from itertools import permutations
 from urllib.parse import parse_qs, unquote, urlparse
 
 import discord
@@ -22,7 +23,7 @@ from core.riot import RiotError
 from core.util import UserError
 
 log = logging.getLogger("bot.scout")
-RECENT = 10                      # ranqueadas analisadas por jogador
+RECENT = 15                      # ranqueadas analisadas por jogador
 CACHE_TTL = 20 * 60              # resultado de cada jogador vale 20 min (a chave da Riot permite ~100 consultas/2 min)
 ROLE_PT = {"TOP": "Top", "JUNGLE": "Jungle", "MIDDLE": "Mid", "BOTTOM": "ADC", "UTILITY": "Suporte"}
 
@@ -73,19 +74,107 @@ async def analyze_player(riot, name: str, tag: str) -> dict:
     matches = [m for m in await asyncio.gather(*(riot.match(i) for i in ids)) if m]
     champs = defaultdict(lambda: {"games": 0, "wins": 0, "k": 0, "d": 0, "a": 0})
     roles = Counter()
+    form = []                                   # vitórias/derrotas, da mais recente pra mais antiga
+    kp = cs = dmg = vision = 0.0
     for m in matches:
-        p = next((x for x in m["info"]["participants"] if x["puuid"] == puuid), None)
-        if not p:
+        info = m["info"]
+        p = next((x for x in info["participants"] if x["puuid"] == puuid), None)
+        if not p or info.get("gameDuration", 0) < 300:   # ignora remake
             continue
         c = champs[p["championId"]]
         c["games"] += 1
         c["wins"] += int(p["win"])
         c["k"] += p["kills"]; c["d"] += p["deaths"]; c["a"] += p["assists"]
+        form.append(bool(p["win"]))
         if p.get("teamPosition"):
             roles[p["teamPosition"]] += 1
+        ch = p.get("challenges", {})
+        team_kills = sum(x["kills"] for x in info["participants"] if x["teamId"] == p["teamId"])
+        kp += ch.get("killParticipation", (p["kills"] + p["assists"]) / max(team_kills, 1))
+        cs += (p["totalMinionsKilled"] + p["neutralMinionsKilled"]) / (info["gameDuration"] / 60)
+        dmg += ch.get("teamDamagePercentage", 0)
+        vision += ch.get("visionScorePerMinute", p.get("visionScore", 0) / (info["gameDuration"] / 60))
+    n = len(form)
+    k = sum(c["k"] for c in champs.values()); d = sum(c["d"] for c in champs.values())
+    a = sum(c["a"] for c in champs.values())
     return {"riot_id": f"{acc['gameName']}#{acc['tagLine']}", "solo": solo, "masteries": masteries,
-            "champs": dict(champs), "games": sum(c["games"] for c in champs.values()),
+            "champs": dict(champs), "games": n, "roles": dict(roles), "form": form,
+            "stats": {"kp": kp / n, "cs": cs / n, "dmg": dmg / n, "vision": vision / n,
+                      "kda": (k + a) / max(d, 1), "wr": sum(form) / n} if n else None,
             "role": ROLE_PT.get(roles.most_common(1)[0][0]) if roles else None}
+
+
+ROLE_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
+
+
+def assign_roles(players: list[dict]) -> list[dict]:
+    """Uma rota por jogador (sem dois Tops): escolhe a combinação que mais bate com o que cada um joga.
+    Devolve os jogadores na ordem Top, Jungle, Mid, ADC, Suporte (quem deu erro vai pro fim)."""
+    ok = [p for p in players if not p.get("error")]
+    bad = [p for p in players if p.get("error")]
+    best, best_score = None, -1
+    for perm in permutations(ROLE_ORDER, len(ok)):
+        score = 0.0
+        for pl, role in zip(ok, perm):
+            games = max(pl["games"], 1)
+            score += pl["roles"].get(role, 0) / games
+        if score > best_score:
+            best, best_score = perm, score
+    for pl, role in zip(ok, best or ()):
+        pl["lane"] = role
+        pl["role"] = ROLE_PT[role]
+        share = pl["roles"].get(role, 0) / max(pl["games"], 1)
+        pl["role_share"] = share
+        main = max(pl["roles"], key=pl["roles"].get) if pl["roles"] else None
+        pl["off_role"] = main is not None and main != role and share < 0.4
+    ok.sort(key=lambda p: ROLE_ORDER.index(p["lane"]))
+    return ok + bad
+
+
+def team_read(players: list[dict], must: list[dict]) -> list[tuple[str, str]]:
+    """Leitura do time em frases curtas: (título, texto)."""
+    ok = [p for p in players if not p.get("error") and p.get("stats")]
+    if not ok:
+        return []
+    name = lambda p: p["riot_id"].split("#")[0]  # noqa: E731
+    elo = lambda p: util.elo_score(p["solo"]["tier"], p["solo"]["rank"], p["solo"]["leaguePoints"]) \
+        if p.get("solo") else 0  # noqa: E731
+
+    def threat(p):
+        s = p["stats"]
+        return (elo(p) or 0) / 400 * 0.6 + s["wr"] * 6 + min(s["kda"], 6) + s["dmg"] * 6
+
+    out = []
+    strong = max(ok, key=threat)
+    s = strong["stats"]
+    tier = util.elo_str(strong["solo"]["tier"], strong["solo"]["rank"], strong["solo"]["leaguePoints"])         if strong.get("solo") else "sem elo"
+    out.append(("MAIOR AMEAÇA", f"{name(strong)} ({strong['role']}, {tier}): {s['wr'] * 100:.0f}% nas últimas, "
+                                f"KDA {s['kda']:.1f} e {s['dmg'] * 100:.0f}% do dano do time."))
+    weak = min(ok, key=threat)
+    if weak is not strong:
+        w = weak["stats"]
+        why = f"{w['wr'] * 100:.0f}% de vitória e KDA {w['kda']:.1f}"
+        if weak.get("off_role"):
+            why += ", fora da rota principal"
+        out.append(("PONTO FRACO", f"{name(weak)} ({weak['role']}): {why}. Jogue em cima dessa rota."))
+    for p in ok:
+        streak = 0
+        for won in p["form"]:
+            if won != p["form"][0]:
+                break
+            streak += 1
+        if streak >= 4:
+            kind = "vitórias" if p["form"][0] else "derrotas"
+            out.append(("SEQUÊNCIA", f"{name(p)} está em {streak} {kind} seguidas."))
+    for p in ok:
+        top_cid, top = max(p["champs"].items(), key=lambda kv: kv[1]["games"])
+        if top["games"] / p["games"] >= 0.6 and not any(c["id"] == top_cid and c["player"] == name(p) for c in must):
+            out.append(("MONO", f"{name(p)} joga quase só um campeão ({top['games']} de {p['games']}): "
+                                f"vale o ban se sobrar."))
+    off = [p for p in ok if p.get("off_role")]
+    for p in off:
+        out.append(("FORA DA ROTA", f"{name(p)} deve jogar {p['role']}, mas quase não joga essa rota."))
+    return out[:4]
 
 
 def ban_suggestions(players: list[dict], dd) -> list[dict]:
@@ -213,10 +302,12 @@ class Scout(commands.Cog):
                 await status(f"🔎 Analisando {name} ({i}/{len(players)})...")
                 results.append(await self.player(name, tag))
         await status("🎨 Montando o card...")
+        results = assign_roles([dict(r) for r in results])   # cópia: o cache não guarda a rota deste time
         cands = ban_suggestions(results, self.bot.ddragon)
         must, extra = split_bans(cands)
+        notes = team_read(results, must)
         try:
-            img = await render_scout(self.bot.cards, results, must, extra, RECENT)
+            img = await render_scout(self.bot.cards, results, must, extra, RECENT, notes)
         except Exception:
             log.exception("Falha ao desenhar o card do scout; mandando em texto")
             await interaction.edit_original_response(content=None, embed=scout_embed(results, self.bot.ddragon))

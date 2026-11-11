@@ -86,7 +86,7 @@ class TierList(commands.Cog):
     def base_embed(self, member: discord.Member, subtitle: str) -> discord.Embed:
         e = discord.Embed(title=f"📝 Tier list de {member.display_name}", description=subtitle or None, color=COLOR)
         e.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-        team = next((r.name.split(" ", 1)[-1] for r in member.roles if r.name.endswith(("Bloom White", "Bloom Red"))),
+        team = next((r.name.split(" ", 1)[-1] for r in member.roles if r.name in ("💎 Bloom White", "🔴 Bloom Red")),
                     "Bloom")
         e.set_footer(text=f"{team} • reaja pra comentar")
         return e
