@@ -1,10 +1,12 @@
 """Tier list de cada jogador, bonitinha.
 
-- Print postado no próprio canal de tier list (📝・nome): o bot reposta num card com o nome, a foto e o elo do
-  jogador e apaga a mensagem crua. Também organiza prints antigos a cada 10 minutos.
-- /tierlist criar: o jogador escreve os campeões de cada nível e o bot gera a imagem com os ícones.
+- Print postado no próprio canal de tier list (📝・nome): o bot lê os campeões (compara cada quadradinho com os
+  ícones oficiais) e monta uma mensagem por nível; se não tiver certeza, reposta o print num card.
+  Também organiza prints antigos a cada 10 minutos.
+- /tierlist criar: o jogador escreve os campeões de cada nível e o bot monta uma mensagem por nível.
 - Texto no formato "S: Jinx, Ahri" (uma linha por nível) postado no canal também vira card.
 """
+import asyncio
 import io
 import logging
 import re
@@ -15,13 +17,16 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from core import util
-from core.cards_tier import render
+from core.cards_tier import TIER_COLORS, render_row
+from core.tier_reader import prepare_icons, read_tierlist
 from core.util import UserError
 
 log = logging.getLogger("bot.tierlist")
 COLOR = 0xE6EDF5
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 POSITION_ROLES = ("👑 Capitão", "🎓 Coach", "🛡️ Titular", "🔁 Reserva")
+TIER_EMOJI = ["🟥", "🟧", "🟨", "🟩", "🟦", "🟪"]
+DEFAULT_LABELS = ["S", "A", "B", "C", "D", "E"]
 
 
 class TierModal(discord.ui.Modal, title="Monte sua tier list"):
@@ -51,6 +56,7 @@ class TierList(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        self._icons = None
 
     async def cog_load(self):
         self.tidy.start()
@@ -95,6 +101,63 @@ class TierList(commands.Cog):
             except discord.HTTPException:
                 pass
 
+    # ------------------------------------------------------------ uma mensagem por nível
+    async def icon_matrix(self):
+        """Ícones de todos os campeões preparados pra comparação (carrega uma vez)."""
+        if self._icons is None:
+            await self.bot.ddragon.ensure()
+            dd = self.bot.ddragon
+            ids = list(dd.champions)
+            imgs = await self.bot.cards.imgs([dd.champ_icon(i) for i in ids])
+            self._icons = await asyncio.to_thread(prepare_icons, {i: im for i, im in zip(ids, imgs) if im})
+        return self._icons
+
+    async def clear_bot_messages(self, channel):
+        async for msg in channel.history(limit=50):
+            if msg.author.id == self.bot.user.id:
+                try:
+                    await msg.delete()
+                except discord.HTTPException:
+                    pass
+
+    async def post_tiers(self, channel, member: discord.Member, tiers: list[tuple[str, list[dict]]],
+                         print_bytes: bytes | None = None, print_ext: str = ".png"):
+        """Abertura + uma mensagem por nível (cor, ícones e nomes) + o print original no fim."""
+        await self.clear_bot_messages(channel)
+        total = sum(len(c) for _, c in tiers)
+        head = self.base_embed(member, await self.subtitle(member))
+        head.description = (head.description + "\n\n" if head.description else "") + \
+            f"**{total} campeões** em {len(tiers)} níveis. Reaja nos níveis pra comentar! 👇"
+        head.set_thumbnail(url=member.display_avatar.url)
+        await channel.send(embed=head)
+        for i, (name, champs) in enumerate(tiers):
+            row = await render_row(self.bot.cards, name, i, champs)
+            r, g, b = TIER_COLORS[i % len(TIER_COLORS)]
+            e = discord.Embed(title=f"{TIER_EMOJI[i % len(TIER_EMOJI)]} {name}", color=(r << 16) | (g << 8) | b,
+                              description=" · ".join(c["name"] for c in champs) or "—")
+            e.set_image(url="attachment://tier.png")
+            e.set_footer(text=f"{len(champs)} campeões")
+            await channel.send(embed=e, file=discord.File(row, filename="tier.png"))
+        if print_bytes:
+            e = discord.Embed(title="🖼️ Print original", color=0x2B2D31)
+            e.set_image(url=f"attachment://print{print_ext}")
+            await channel.send(embed=e, file=discord.File(io.BytesIO(print_bytes), filename=f"print{print_ext}"))
+
+    async def read_print(self, data: bytes):
+        """Tenta ler o print; devolve [(nome, [campeões])] só se a leitura for confiável."""
+        icon_ids, mat = await self.icon_matrix()
+        rows = await asyncio.to_thread(read_tierlist, data, icon_ids, mat)
+        rows = [r for r in rows if r[2]]
+        dists = [d for r in rows for _, d, _ in r[2]]
+        if len(rows) < 2 or not dists:
+            return None
+        # só confia se TODOS os ícones baterem bem (nos testes, acima de 0,5 começa a errar)
+        if max(dists) >= 0.5:
+            return None
+        dd = self.bot.ddragon
+        return [(DEFAULT_LABELS[i] if i < len(DEFAULT_LABELS) else f"Nível {i + 1}",
+                 [dd.champions[c] for c, _, _ in r[2]]) for i, r in enumerate(rows)]
+
     async def post_card(self, channel, member: discord.Member, tiers_text: list[tuple[str, str]]) -> list[str]:
         await self.bot.ddragon.ensure()
         tiers, unknown = [], []
@@ -114,8 +177,7 @@ class TierList(commands.Cog):
             tiers.pop()
         if not any(c for _, c in tiers):
             raise UserError("Não reconheci nenhum campeão. Escreva os nomes separados por vírgula.")
-        card = await render(self.bot.cards, member.display_name, await self.subtitle(member), tiers)
-        await self.post_image(channel, member, card.getvalue(), ".jpg")
+        await self.post_tiers(channel, member, tiers)
         return unknown
 
     # ------------------------------------------------------------ mensagens no canal de tier list
@@ -129,9 +191,21 @@ class TierList(commands.Cog):
         images = [a for a in message.attachments if a.filename.lower().endswith(IMAGE_EXT)
                   or (a.content_type or "").startswith("image/")]
         if images:
-            for a in images:
-                ext = "." + (a.content_type or "image/png").split("/")[-1].replace("jpeg", "jpg")
-                await self.post_image(message.channel, member, await a.read(), ext, message.created_at)
+            a = images[0]
+            ext = "." + (a.content_type or "image/png").split("/")[-1].replace("jpeg", "jpg")
+            data = await a.read()
+            try:
+                tiers = await self.read_print(data)
+            except Exception:
+                log.exception("Falha ao ler o print da tier list")
+                tiers = None
+            if tiers:
+                await self.post_tiers(message.channel, member, tiers, data, ext)
+            else:
+                await self.post_image(message.channel, member, data, ext, message.created_at)
+                await message.channel.send("ℹ️ Não consegui ler os campeões desse print com segurança. "
+                                           "Use **/tierlist criar** pra montar com os ícones, nível por nível.",
+                                           delete_after=120)
         elif re.search(r"^\s*\w[\w +\-]{0,20}\s*[:=-]\s*\S", message.content or "", re.M):
             tiers = []
             for line in message.content.splitlines():

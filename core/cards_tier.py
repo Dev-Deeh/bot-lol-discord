@@ -15,6 +15,42 @@ TIER_COLORS = [(255, 110, 120), (255, 170, 100), (255, 215, 110), (190, 230, 120
 W, M, ICON, GAP, LABEL_W = 1200, 48, 72, 8, 150
 
 
+ROW_W, ROW_ICON, ROW_GAP, ROW_LABEL = 1000, 72, 8, 170
+
+
+async def render_row(cards, name: str, index: int, champs: list[dict]):
+    """Uma faixa: etiqueta colorida do nível + ícones dos campeões (pra uma mensagem por nível)."""
+    imgs = await cards.imgs([cards.dd.champ_icon(c["id"]) for c in champs])
+    return await asyncio.to_thread(_render_row, name, index, list(zip(champs, imgs)))
+
+
+def _render_row(name, index, champs):
+    pad = 14
+    per_row = max(1, (ROW_W - ROW_LABEL - 2 * pad) // (ROW_ICON + ROW_GAP))
+    lines = max(1, -(-len(champs) // per_row))
+    H = lines * (ROW_ICON + ROW_GAP) - ROW_GAP + 2 * pad
+    color = TIER_COLORS[index % len(TIER_COLORS)]
+    base = Image.new("RGBA", (ROW_W, H), (22, 16, 30, 255))
+    d = ImageDraw.Draw(base)
+    d.rectangle((0, 0, ROW_LABEL, H), fill=color)
+    size = 44 if len(name) <= 4 else 34 if len(name) <= 9 else 26
+    words = name.upper().split()
+    text = name.upper() if bebas(size).getlength(name.upper()) <= ROW_LABEL - 20 or len(words) == 1 \
+        else "\n".join([" ".join(words[: len(words) // 2]), " ".join(words[len(words) // 2:])])
+    d.multiline_text((ROW_LABEL / 2, H / 2), text, font=bebas(size), fill=BG, anchor="mm", align="center", spacing=2)
+    for j, (champ, img) in enumerate(champs):
+        cx = ROW_LABEL + pad + (j % per_row) * (ROW_ICON + ROW_GAP)
+        cy = pad + (j // per_row) * (ROW_ICON + ROW_GAP)
+        if img:
+            base.alpha_composite(rounded(img, ROW_ICON, ROW_ICON, 10), (cx, cy))
+        else:
+            ImageDraw.Draw(base).rounded_rectangle((cx, cy, cx + ROW_ICON, cy + ROW_ICON), 10, fill=(40, 30, 55))
+    buf = io.BytesIO()
+    base.convert("RGB").save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return buf
+
+
 async def render(cards, owner_name: str, subtitle: str, tiers: list[tuple[str, list[dict]]]):
     """tiers: [(nome do nível, [dados do campeão do Data Dragon, ...]), ...]"""
     urls = [cards.dd.champ_icon(c["id"]) for _, champs in tiers for c in champs]
