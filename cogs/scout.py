@@ -16,6 +16,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from core import util
+from core.cards_scout import render_scout
 from core.riot import RiotError
 from core.util import UserError
 
@@ -103,12 +104,19 @@ def ban_suggestions(players: list[dict], dd) -> list[dict]:
                 reasons.append(f"{top_mastery[cid] // 1000} mil de maestria")
             kda = (c["k"] + c["a"]) / max(c["d"], 1)
             cands.append({"champ": dd.champ_name(cid), "id": cid, "player": pl["riot_id"].split("#")[0],
-                          "score": score, "games": c["games"], "share": share, "kda": kda,
+                          "score": score, "games": c["games"], "total": pl["games"], "share": share, "kda": kda,
                           "wr": c["wins"] / c["games"],
                           "reasons": ", ".join(reasons),
                           "must": c["games"] >= 3 and (share >= 0.4 or c["wins"] / c["games"] >= 0.6)})
     cands.sort(key=lambda x: -x["score"])
     return cands
+
+
+def split_bans(cands: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Bans obrigatórios (até 3) e, se houver, até 2 extras em que o jogador está ganhando."""
+    must = [c for c in cands if c["must"]][:3]
+    extra = [c for c in cands if not c["must"] and c["wr"] >= 0.5][:2] if must else []
+    return must, extra
 
 
 def scout_embed(players: list[dict], dd) -> discord.Embed:
@@ -173,7 +181,15 @@ class Scout(commands.Cog):
                 if e.status in (0, 401, 403):
                     raise
                 results.append({"riot_id": f"{name}#{tag}", "error": f"erro da Riot ({e.status})"})
-        await interaction.followup.send(embed=scout_embed(results, self.bot.ddragon))
+        cands = ban_suggestions(results, self.bot.ddragon)
+        must, extra = split_bans(cands)
+        try:
+            img = await render_scout(self.bot.cards, results, must, extra, RECENT)
+        except Exception:
+            log.exception("Falha ao desenhar o card do scout; mandando em texto")
+            await interaction.followup.send(embed=scout_embed(results, self.bot.ddragon))
+            return
+        await interaction.followup.send(file=discord.File(img, filename="scout.jpg"))
 
 
 async def setup(bot):

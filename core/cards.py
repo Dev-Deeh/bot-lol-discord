@@ -209,10 +209,17 @@ class CardMaker:
             self.cache.move_to_end(url)
         else:
             try:
-                async with self.session.get(url, headers=UA, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                    if r.status != 200:
-                        return None
-                    data = await r.read()
+                data = None
+                for attempt in range(2):  # muitas imagens ao mesmo tempo às vezes estouram o tempo: tenta de novo
+                    try:
+                        async with self.session.get(url, headers=UA, timeout=aiohttp.ClientTimeout(total=20)) as r:
+                            if r.status != 200:
+                                return None
+                            data = await r.read()
+                        break
+                    except asyncio.TimeoutError:
+                        if attempt:
+                            raise
                 if "ranked-emblem" in url:  # emblemas vêm 1280x720 com muita borda: recorta e reduz uma vez
                     im = crop_alpha(Image.open(io.BytesIO(data)).convert("RGBA"))
                     im.thumbnail((240, 240), Image.LANCZOS)
