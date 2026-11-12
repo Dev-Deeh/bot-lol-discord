@@ -71,7 +71,8 @@ class Avisos(commands.Cog):
         try:
             await self.ensure_logo(message.guild)
             card = await asyncio.to_thread(render_aviso, info["team"], info["kind"], info["heading"], info["title"],
-                                           info["start"], info["type_label"], info["location"])
+                                           info["start"], info["type_label"], info["location"],
+                                           now=message.created_at)
             hook = await self.webhook(message)
             if not hook:
                 log.warning("Sem acesso ao webhook do aviso em #%s", message.channel)

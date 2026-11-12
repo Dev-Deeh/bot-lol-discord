@@ -55,6 +55,8 @@ def layer(base, fn):
 
 def countdown(start, now):
     mins = int((start - now).total_seconds() // 60)
+    if mins < -180:
+        return "ENCERRADO"
     if mins < 0:
         return "JÁ COMEÇOU"
     if mins < 60:
