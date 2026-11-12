@@ -1,26 +1,28 @@
-"""Card do /scout: uma linha por jogador (rota, elo, forma, números e campeões) + bans + leitura do time."""
+"""Cards do /scout, pensados pra ler no Discord sem precisar abrir a imagem.
+
+- Resumo: bans sugeridos, leitura do time e quem não foi encontrado.
+- Um card por jogador: elo, forma recente, números e os campeões que ele joga,
+  com o campeão mais jogado de fundo.
+O Discord mostra cada card na largura toda da mensagem, então a letra é grande."""
 import asyncio
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from core.cards import TIER_COLOR, fit_box, rounded
+from core.cards import TIER_COLOR, cover, fit_box, rounded
 from core.cards_pro import barlow, bebas, fit, jpg, tracked
 from core.util import TIER_PT, TIERS
 
 W = 1200
-M = 48
+M = 56
 BG = (11, 7, 16)
-PANEL = (255, 255, 255, 10)
-LINE = (255, 255, 255, 24)
+PANEL = (255, 255, 255, 12)
+LINE = (255, 255, 255, 30)
 TEXT = (244, 240, 248)
-MUTED = (150, 140, 165)
-ACCENT = (232, 64, 87)       # vermelho: scout/adversário
+MUTED = (160, 150, 175)
+ACCENT = (232, 64, 87)
 WIN = (64, 214, 140)
 LOSS = (240, 74, 92)
-ROW_H = 150
-GAP = 12
-ICON = 56
-LANE_SHORT = {"TOP": "TOP", "JUNGLE": "JG", "MIDDLE": "MID", "BOTTOM": "ADC", "UTILITY": "SUP"}
+POOL = 4
 
 
 def tier_name(e):
@@ -50,178 +52,247 @@ def wrap(text, f, max_w):
     return lines
 
 
+def glow(base, box, color, alpha, blur):
+    lay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    ImageDraw.Draw(lay).ellipse(box, fill=color + (alpha,))
+    base.alpha_composite(lay.filter(ImageFilter.GaussianBlur(blur)))
+
+
+def short(riot_id):
+    return riot_id.split("#")[0]
+
+
+# ================================================================== carregamento
 async def render_scout(cards, players: list[dict], must: list[dict], extra: list[dict], recent: int,
                        notes: list[tuple[str, str]] | None = None):
+    """Devolve [resumo, card do jogador 1, card do jogador 2, ...] (JPGs em memória)."""
     dd = cards.dd
     icon = lambda cid: dd.champ_icon(dd.by_key[cid]["id"]) if cid in dd.by_key else None  # noqa: E731
     urls = []
     for pl in players:
         if pl.get("error"):
             continue
+        pl["_top"] = sorted(pl["champs"].items(), key=lambda kv: (-kv[1]["games"], -kv[1]["wins"]))[:POOL]
+        if not pl["_top"]:   # sem ranqueadas: mostra as maiores maestrias
+            pl["_mastery"] = [m["championId"] for m in pl.get("masteries", [])][:POOL]
+        ids = [cid for cid, _ in pl["_top"]] or pl.get("_mastery", [])
+        main = dd.by_key.get(ids[0]) if ids else None
         urls.append(cards.emblem_url(pl["solo"]["tier"]) if pl.get("solo") else None)
-        pl["_top"] = sorted(pl["champs"].items(), key=lambda kv: (-kv[1]["games"], -kv[1]["wins"]))[:3]
-        urls += [icon(cid) for cid, _ in pl["_top"]]
+        urls.append(dd.splash(main["id"]) if main else None)
+        urls += [icon(cid) for cid in ids]
     urls += [icon(c["id"]) for c in must]
     imgs = iter(await cards.imgs(urls))
     for pl in players:
         if pl.get("error"):
             continue
         pl["_emblem"] = next(imgs)
-        pl["_top_imgs"] = [next(imgs) for _ in pl["_top"]]
+        pl["_splash"] = next(imgs)
+        pl["_icons"] = [next(imgs) for _ in (pl["_top"] or pl.get("_mastery", []))]
     for c in must:
         c["_img"] = next(imgs)
-    return await asyncio.to_thread(_render, players, must, extra, recent, notes or [])
+    names = {c: dd.champ_name(c) for pl in players if not pl.get("error")
+             for c in [cid for cid, _ in pl["_top"]] + pl.get("_mastery", [])}
+    return await asyncio.to_thread(_render_all, players, must, extra, recent, notes or [], names)
 
 
-def _row(base, pl, y, ban_keys):
-    layer_rect(base, (M, y, W - M, y + ROW_H), 16, fill=PANEL, outline=LINE)
+def _render_all(players, must, extra, recent, notes, names):
+    ok = [p for p in players if not p.get("error")]
+    out = [_summary(players, must, extra, recent, notes)]
+    ban_keys = {(c["player"], c["id"]) for c in must}
+    for i, pl in enumerate(ok, 1):
+        out.append(_player(pl, i, len(ok), recent, ban_keys, names))
+    return out
+
+
+# ================================================================== resumo
+def _summary(players, must, extra, recent, notes):
+    ok = [p for p in players if not p.get("error")]
+    bad = [p for p in players if p.get("error")]
+    note_f = barlow(30, "Medium")
+    note_lines = [wrap(t, note_f, W - 2 * M - 56) for _, t in notes]
+    H = 230 + (330 if must else 170) + (60 if extra else 0)
+    if notes:
+        H += 80 + sum(64 + 40 * len(ls) + 18 for ls in note_lines)
+    if bad:
+        H += 70
+    H += 60
+    base = Image.new("RGBA", (W, H), BG + (255,))
+    glow(base, (W - 560, -360, W + 300, 320), ACCENT, 60, 140)
     d = ImageDraw.Draw(base)
-    if pl.get("error"):
-        d.text((M + 28, y + ROW_H / 2), pl["riot_id"], font=bebas(36), fill=MUTED, anchor="lm")
-        d.text((W - M - 28, y + ROW_H / 2), pl["error"].upper(), font=barlow(18), fill=LOSS, anchor="rm")
-        return
+    d.rectangle((0, 0, 8, H), fill=ACCENT)
+
+    tracked(d, (M, 50), "SCOUT · TIME ADVERSÁRIO", barlow(24, "Bold"), ACCENT, 5)
+    d.text((M - 4, 80), "ANÁLISE DO ADVERSÁRIO", font=bebas(92), fill=TEXT)
+    sub = f"{len(ok)} JOGADORES · ÚLTIMAS {recent} RANQUEADAS SOLO/DUO DE CADA UM"
+    tracked(d, (M, 180), sub, barlow(22, "Bold"), MUTED, 3)
+    y = 230
+
+    if must:
+        d.text((M, y), "BANIR", font=bebas(64), fill=ACCENT)
+        y += 80
+        n = len(must)
+        gap = 20
+        bw = (W - 2 * M - gap * (n - 1)) / n
+        for i, c in enumerate(must):
+            x = M + i * (bw + gap)
+            layer_rect(base, (x, y, x + bw, y + 230), 20, fill=ACCENT + (30,), outline=ACCENT + (170,), width=3)
+            if c.get("_img"):
+                base.alpha_composite(rounded(c["_img"], 120, 120, 18), (int(x + 22), y + 22))
+            d = ImageDraw.Draw(base)
+            tx, tw = x + 160, bw - 176
+            if n == 3:   # 3 lado a lado: o texto vai embaixo do ícone
+                tx, tw = x + 22, bw - 44
+                d.text((x + 160, y + 30), fit(c["champ"].upper(), bebas(46), bw - 176), font=bebas(46), fill=TEXT)
+                d.text((x + 160, y + 86), fit(c["player"], barlow(28, "Bold"), bw - 176), font=barlow(28, "Bold"),
+                       fill=MUTED)
+                d.text((tx, y + 158), f"{c['games']} DE {c['total']} JOGOS", font=bebas(34), fill=TEXT)
+                d.text((tx, y + 192), f"{c['wr'] * 100:.0f}% VITÓRIA · KDA {c['kda']:.1f}", font=bebas(30),
+                       fill=WIN if c["wr"] >= .5 else LOSS)
+            else:
+                d.text((tx, y + 26), fit(c["champ"].upper(), bebas(56), tw), font=bebas(56), fill=TEXT)
+                d.text((tx, y + 90), fit(c["player"], barlow(30, "Bold"), tw), font=barlow(30, "Bold"), fill=MUTED)
+                d.text((tx, y + 140), f"{c['games']} DE {c['total']} JOGOS", font=bebas(36), fill=TEXT)
+                d.text((tx, y + 180), f"{c['wr'] * 100:.0f}% DE VITÓRIA · KDA {c['kda']:.1f}", font=bebas(32),
+                       fill=WIN if c["wr"] >= .5 else LOSS)
+        y += 250
+        if extra:
+            txt = "SE SOBRAR BAN:  " + "  ·  ".join(f"{c['champ'].upper()} ({c['player']})" for c in extra)
+            d.text((M, y), fit(txt, bebas(38), W - 2 * M), font=bebas(38), fill=MUTED)
+            y += 60
+    else:
+        layer_rect(base, (M, y, W - M, y + 150), 20, fill=PANEL, outline=LINE)
+        d = ImageDraw.Draw(base)
+        d.text((M + 32, y + 24), "SEM BAN OBRIGATÓRIO", font=bebas(56), fill=WIN)
+        d.text((M + 32, y + 92), "Ninguém tem um campeão dominante. Use os bans nos counters do seu time.",
+               font=barlow(28, "Medium"), fill=MUTED)
+        y += 170
+
+    if notes:
+        y += 20
+        d.text((M, y), "LEITURA DO TIME", font=bebas(56), fill=TEXT)
+        y += 70
+        for (title, _), lines in zip(notes, note_lines):
+            h = 64 + 40 * len(lines)
+            layer_rect(base, (M, y, W - M, y + h), 18, fill=PANEL, outline=LINE)
+            d = ImageDraw.Draw(base)
+            col = WIN if title == "PONTO FRACO" else ACCENT
+            d.rectangle((M, y + 18, M + 5, y + h - 18), fill=col)
+            tracked(d, (M + 28, y + 18), title, barlow(22, "Bold"), col, 4)
+            for j, line in enumerate(lines):
+                d.text((M + 28, y + 50 + j * 40), line, font=note_f, fill=TEXT)
+            y += h + 18
+
+    if bad:
+        txt = "NÃO ENCONTRADOS: " + ", ".join(p["riot_id"] for p in bad)
+        d.text((M, y + 10), fit(txt, barlow(28, "Bold"), W - 2 * M), font=barlow(28, "Bold"), fill=LOSS)
+        y += 70
+
+    tracked(d, (M, H - 44), "BOT DEEH LOL · DADOS DA API OFICIAL DA RIOT", barlow(18, "Bold"), MUTED, 3)
+    return jpg(base)
+
+
+# ================================================================== card do jogador
+def _player(pl, idx, total, recent, ban_keys, names):
+    H = 640
+    base = Image.new("RGBA", (W, H), BG + (255,))
     solo, st = pl.get("solo"), pl.get("stats")
-
-    # rota
-    lane = LANE_SHORT.get(pl.get("lane"), "?")
-    d.rectangle((M, y + 20, M + 4, y + ROW_H - 20), fill=ACCENT)
-    d.text((M + 58, y + 76), lane, font=bebas(44), fill=TEXT, anchor="ms")
-    share = pl.get("role_share", 0)
-    d.text((M + 58, y + 100), f"{share * 100:.0f}% NA ROTA", font=barlow(12),
-           fill=LOSS if pl.get("off_role") else MUTED, anchor="ms")
-
-    # emblema + nick + elo
-    if pl["_emblem"]:
-        e = fit_box(pl["_emblem"], 78, 70)
-        base.alpha_composite(e, (M + 112 + (78 - e.width) // 2, y + 26 + (70 - e.height) // 2))
-    d = ImageDraw.Draw(base)
-    nx = M + 204
-    name, _, tag = pl["riot_id"].partition("#")
-    nm = fit(name.upper(), bebas(34), 250)
-    d.text((nx, y + 50), nm, font=bebas(34), fill=TEXT, anchor="ls")
-    d.text((nx + bebas(34).getlength(nm) + 6, y + 48), f"#{tag}", font=barlow(15, "Medium"), fill=MUTED, anchor="ls")
     tcol = TIER_COLOR.get(solo["tier"], TEXT) if solo else MUTED
-    d.text((nx, y + 78), tier_name(solo), font=bebas(24), fill=tcol, anchor="ls")
+
+    # fundo: splash do campeão mais jogado à direita, sumindo pra esquerda
+    if pl.get("_splash"):
+        sp = cover(pl["_splash"].convert("RGBA"), 760, H, 0.25)
+        mask = Image.linear_gradient("L").rotate(90, expand=True).resize((760, H))
+        mask = mask.point(lambda v: int(v * 0.8))
+        layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        layer.paste(sp, (W - 760, 0), mask)
+        base.alpha_composite(layer)
+        shade = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(shade).rectangle((0, 250, W, H), fill=BG + (150,))
+        base.alpha_composite(shade.filter(ImageFilter.GaussianBlur(40)))
+    glow(base, (-300, -300, 400, 300), tcol, 50, 130)
+    d = ImageDraw.Draw(base)
+    d.rectangle((0, 0, 8, H), fill=tcol)
+
+    # ---- cabeçalho: emblema, nick, elo
+    tracked(d, (M, 40), f"JOGADOR {idx} DE {total}", barlow(22, "Bold"), MUTED, 4)
+    x = M
+    if pl.get("_emblem"):
+        e = fit_box(pl["_emblem"], 150, 130)
+        base.alpha_composite(e, (M - 10 + (150 - e.width) // 2, 78 + (130 - e.height) // 2))
+        x = M + 160
+    d = ImageDraw.Draw(base)
+    name, _, tag = pl["riot_id"].partition("#")
+    nf = bebas(80)
+    nm = fit(name.upper(), nf, W - x - 200)
+    d.text((x, 72), nm, font=nf, fill=TEXT)
+    d.text((x + nf.getlength(nm) + 10, 112), f"#{tag}", font=barlow(30, "Medium"), fill=MUTED)
+    elo = tier_name(solo)
+    d.text((x, 160), elo, font=bebas(48), fill=tcol)
     if solo:
         w, l = solo["wins"], solo["losses"]
-        tx = nx + bebas(24).getlength(tier_name(solo)) + 10
-        d.text((tx, y + 77), f"{solo['leaguePoints']} PDL · {w / max(w + l, 1) * 100:.0f}% em {w + l} jogos",
-               font=barlow(14, "Medium"), fill=MUTED, anchor="ls")
+        d.text((x + bebas(48).getlength(elo) + 16, 170),
+               f"{solo['leaguePoints']} PDL · {w / max(w + l, 1) * 100:.0f}% EM {w + l} JOGOS",
+               font=barlow(30, "Bold"), fill=MUTED)
 
-    # forma recente: quadradinhos (mais antiga à esquerda, mais nova à direita)
+    # ---- forma recente (mais antiga à esquerda)
     form = list(reversed(pl.get("form", [])))
-    fx = nx
-    for won in form:
-        d.rounded_rectangle((fx, y + 96, fx + 13, y + 109), 3, fill=WIN if won else LOSS)
-        fx += 17
+    fy = 236
     if form:
+        tracked(d, (M, fy), f"ÚLTIMAS {len(form)} RANQUEADAS", barlow(22, "Bold"), MUTED, 3)
+        fx = M
+        for won in form:
+            d.rounded_rectangle((fx, fy + 36, fx + 30, fy + 66), 6, fill=WIN if won else LOSS)
+            fx += 38
         wins = sum(form)
-        d.text((fx + 6, y + 109), f"{wins}V {len(form) - wins}D", font=bebas(18), fill=TEXT, anchor="ls")
-    tracked(d, (nx, y + 120), "DA MAIS ANTIGA PRA MAIS RECENTE", barlow(10), MUTED, 1.5)
+        d.text((fx + 12, fy + 30), f"{wins}V {len(form) - wins}D", font=bebas(42), fill=TEXT)
 
-    # números
-    sx = 640
+    # ---- números
     if st:
-        cells = [("KDA", f"{st['kda']:.1f}"), ("PART. KILLS", f"{st['kp'] * 100:.0f}%"),
-                 ("CS/MIN", f"{st['cs']:.1f}"), ("DANO DO TIME", f"{st['dmg'] * 100:.0f}%")]
+        cells = [("KDA", f"{st['kda']:.1f}"), ("VITÓRIAS", f"{st['wr'] * 100:.0f}%"),
+                 ("PART. KILLS", f"{st['kp'] * 100:.0f}%"), ("DANO DO TIME", f"{st['dmg'] * 100:.0f}%")]
+        cy = 340
+        gap = 16
+        cw = (W - 2 * M - gap * 3) / 4
         for i, (lab, val) in enumerate(cells):
-            cx, cy = sx + (i % 2) * 86, y + 22 + (i // 2) * 58
-            d.text((cx, cy + 28), val, font=bebas(30), fill=TEXT, anchor="ls")
-            tracked(d, (cx, cy + 34), lab, barlow(10), MUTED, 1.2)
+            cx = M + i * (cw + gap)
+            layer_rect(base, (cx, cy, cx + cw, cy + 104), 16, fill=(16, 12, 22, 200), outline=LINE)
+            d = ImageDraw.Draw(base)
+            tracked(d, (cx + 22, cy + 14), lab, barlow(20, "Bold"), MUTED, 3)
+            col = TEXT
+            if lab == "VITÓRIAS":
+                col = WIN if st["wr"] >= .5 else LOSS
+            d.text((cx + 22, cy + 38), val, font=bebas(58), fill=col)
 
-    # campeões
-    cx0 = 826
-    tracked(d, (cx0, y + 12), f"MAIS JOGADOS · POOL DE {len(pl['champs'])}", barlow(11), MUTED, 1.6)
-    for i, ((cid, c), img) in enumerate(zip(pl["_top"], pl["_top_imgs"])):
-        x = cx0 + i * 108
-        is_ban = (name, cid) in ban_keys
+    # ---- campeões que ele joga
+    py = 470
+    top, mastery = pl["_top"], pl.get("_mastery", [])
+    label = (f"O QUE ELE JOGA · {len(pl['champs'])} CAMPEÕES NAS ÚLTIMAS {pl['games']}" if top
+             else "SEM RANQUEADAS RECENTES · MAIORES MAESTRIAS")
+    tracked(d, (M, py - 6), label, barlow(22, "Bold"), MUTED, 3)
+    slots = len(top or mastery)
+    sw = (W - 2 * M) / POOL
+    for i in range(slots):
+        sx = M + i * sw
+        cid = top[i][0] if top else mastery[i]
+        img = pl["_icons"][i] if i < len(pl["_icons"]) else None
+        banned = (short(pl["riot_id"]), cid) in ban_keys
+        iy = py + 34
         if img:
-            base.alpha_composite(rounded(img, ICON, ICON, 10), (x, y + 34))
+            base.alpha_composite(rounded(img, 96, 96, 14), (int(sx), iy))
         d = ImageDraw.Draw(base)
-        d.rounded_rectangle((x, y + 34, x + ICON - 1, y + 34 + ICON - 1), 10,
-                            outline=ACCENT if is_ban else (255, 255, 255, 40), width=3 if is_ban else 1)
-        wr = c["wins"] / c["games"]
-        kda = (c["k"] + c["a"]) / max(c["d"], 1)
-        d.text((x + ICON + 6, y + 50), f"{c['games']}J", font=bebas(22), fill=TEXT, anchor="ls")
-        d.text((x + ICON + 6, y + 70), f"{wr * 100:.0f}%", font=barlow(14), fill=WIN if wr >= .5 else LOSS,
-               anchor="ls")
-        d.text((x + ICON + 6, y + 87), f"KDA {kda:.1f}", font=barlow(12, "Medium"), fill=MUTED, anchor="ls")
-        if is_ban:
-            d.text((x + ICON / 2, y + 34 + ICON + 20), "BANIR", font=bebas(18), fill=ACCENT, anchor="ms")
-    if not pl["_top"]:
-        d.text((cx0, y + 70), "SEM RANQUEADAS RECENTES", font=barlow(15), fill=MUTED, anchor="ls")
-
-
-def _render(players, must, extra, recent, notes):
-    ban_keys = {(c["player"], c["id"]) for c in must}
-    ban_h = 250 if must else 150
-    notes_h = (70 + ((len(notes) + 1) // 2) * 92) if notes else 0
-    H = 150 + len(players) * (ROW_H + GAP) + 20 + ban_h + notes_h + 50
-    base = Image.new("RGBA", (W, H), BG + (255,))
-    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse((W - 500, -300, W + 300, 300), fill=ACCENT + (38,))
-    base.alpha_composite(glow.filter(ImageFilter.GaussianBlur(130)))
-    d = ImageDraw.Draw(base)
-    d.rectangle((0, 0, 5, H), fill=ACCENT)
-    d.rectangle((M, 50, M + 26, 52), fill=ACCENT)
-    tracked(d, (M + 38, 42), "SCOUT · TIME ADVERSÁRIO", barlow(16), ACCENT, 3)
-    d.text((M, 128), "ANÁLISE DE BANS", font=bebas(72), fill=TEXT, anchor="ls")
-    d.text((W - M, 124), f"últimas {recent} ranqueadas solo/duo de cada um", font=barlow(20, "Medium"),
-           fill=MUTED, anchor="rs")
-
-    y = 150
-    for pl in players:
-        _row(base, pl, y, ban_keys)
-        y += ROW_H + GAP
-
-    # ---------- bans
-    y += 20
-    d = ImageDraw.Draw(base)
-    if must:
-        d.text((M, y + 40), "BANIR", font=bebas(52), fill=ACCENT, anchor="ls")
-        tracked(d, (M + bebas(52).getlength("BANIR") + 16, y + 36), "OS CAMPEÕES QUE MAIS AMEAÇAM", barlow(14),
-                MUTED, 2.5)
-        bw = (W - 2 * M - 2 * 20) / 3
-        for i, c in enumerate(must[:3]):
-            x = M + i * (bw + 20)
-            layer_rect(base, (x, y + 60, x + bw, y + 230), 16, fill=(232, 64, 87, 28), outline=ACCENT + (160,),
-                       width=2)
-            if c.get("_img"):
-                base.alpha_composite(rounded(c["_img"], 96, 96, 16), (int(x + 18), y + 80))
-            d = ImageDraw.Draw(base)
-            d.text((x + 132, y + 112), fit(c["champ"].upper(), bebas(38), bw - 150), font=bebas(38), fill=TEXT,
-                   anchor="ls")
-            d.text((x + 132, y + 138), fit(c["player"], barlow(18), bw - 150), font=barlow(18), fill=MUTED,
-                   anchor="ls")
-            d.text((x + 132, y + 166), f"{c['games']} DE {c['total']} JOGOS", font=bebas(24), fill=TEXT,
-                   anchor="ls")
-            d.text((x + 132, y + 192), f"{c['wr'] * 100:.0f}% DE VITÓRIA · KDA {c['kda']:.1f}", font=bebas(24),
-                   fill=WIN if c["wr"] >= .5 else LOSS, anchor="ls")
-        if extra:
-            d.text((W - M, y + 40), "SE SOBRAR BAN: " + " · ".join(c["champ"].upper() for c in extra),
-                   font=bebas(24), fill=MUTED, anchor="rs")
-    else:
-        layer_rect(base, (M, y + 10, W - M, y + 130), 16, fill=PANEL, outline=LINE)
-        d = ImageDraw.Draw(base)
-        d.text((M + 28, y + 64), "SEM BAN OBRIGATÓRIO", font=bebas(44), fill=WIN, anchor="ls")
-        d.text((M + 28, y + 98), "Ninguém tem um campeão dominante. Use os bans nos counters do seu time ou no meta.",
-               font=barlow(18, "Medium"), fill=MUTED, anchor="ls")
-    y += ban_h
-
-    # ---------- leitura do time
-    if notes:
-        d = ImageDraw.Draw(base)
-        d.text((M, y + 40), "LEITURA DO TIME", font=bebas(40), fill=TEXT, anchor="ls")
-        cw = (W - 2 * M - 20) / 2
-        for i, (title, text) in enumerate(notes):
-            x = M + (i % 2) * (cw + 20)
-            ty = y + 60 + (i // 2) * 92
-            layer_rect(base, (x, ty, x + cw, ty + 80), 14, fill=PANEL, outline=LINE)
-            d = ImageDraw.Draw(base)
-            tracked(d, (x + 20, ty + 14), title, barlow(12), WIN if title == "PONTO FRACO" else ACCENT, 2)
-            for j, line in enumerate(wrap(text, barlow(17, "Medium"), cw - 40)[:2]):
-                d.text((x + 20, ty + 46 + j * 22), line, font=barlow(17, "Medium"), fill=TEXT, anchor="ls")
-
-    d = ImageDraw.Draw(base)
-    tracked(d, (M, H - 34), "BOT DEEH LOL · DADOS DA API OFICIAL DA RIOT", barlow(12), MUTED, 2.5)
+        d.rounded_rectangle((sx, iy, sx + 95, iy + 95), 14, outline=ACCENT if banned else (255, 255, 255, 50),
+                            width=5 if banned else 2)
+        if banned:
+            d.rounded_rectangle((sx + 10, iy + 76, sx + 86, iy + 104), 8, fill=ACCENT)
+            d.text((sx + 48, iy + 91), "BANIR", font=bebas(26), fill=TEXT, anchor="mm")
+        tx, tw = sx + 108, sw - 116
+        d.text((tx, iy - 2), fit(names.get(cid, "?").upper(), bebas(34), tw), font=bebas(34), fill=TEXT)
+        if top:
+            c = top[i][1]
+            wr = c["wins"] / c["games"]
+            d.text((tx, iy + 36), f"{c['games']} JOGO" + ("S" if c["games"] > 1 else ""), font=barlow(26, "Bold"), fill=TEXT)
+            d.text((tx, iy + 66), f"{wr * 100:.0f}%", font=barlow(26, "Bold"), fill=WIN if wr >= .5 else LOSS)
+            kda = (c["k"] + c["a"]) / max(c["d"], 1)
+            d.text((tx + barlow(26, "Bold").getlength(f"{wr * 100:.0f}%") + 10, iy + 66), f"KDA {kda:.1f}",
+                   font=barlow(26, "Medium"), fill=MUTED)
     return jpg(base)

@@ -1,4 +1,4 @@
-"""/scout: analisa os 5 jogadores de um time adversário e sugere bans.
+"""/scout: analisa os jogadores de um time adversário (todos que vierem no link, até 10) e sugere bans.
 
 Aceita o link da multibusca do OP.GG, o texto copiado do saguão ou nicks separados por vírgula.
 Os dados vêm da API oficial da Riot (o OP.GG é usado só pra ler os nicks do link):
@@ -10,7 +10,6 @@ import logging
 import re
 import time
 from collections import Counter, defaultdict
-from itertools import permutations
 from urllib.parse import parse_qs, unquote, urlparse
 
 import discord
@@ -25,6 +24,7 @@ from core.util import UserError
 log = logging.getLogger("bot.scout")
 RECENT = 15                      # ranqueadas analisadas por jogador
 CACHE_TTL = 20 * 60              # resultado de cada jogador vale 20 min (a chave da Riot permite ~100 consultas/2 min)
+MAX_PLAYERS = 10                 # a multibusca do OP.GG aceita até 10
 ROLE_PT = {"TOP": "Top", "JUNGLE": "Jungle", "MIDDLE": "Mid", "BOTTOM": "ADC", "UTILITY": "Suporte"}
 
 
@@ -60,7 +60,7 @@ def parse_players(text: str) -> list[tuple[str, str]]:
         if name and key not in seen:
             seen.add(key)
             players.append((name, tag))
-    return players[:5]
+    return players[:MAX_PLAYERS]
 
 
 # ------------------------------------------------------------------ análise
@@ -104,33 +104,6 @@ async def analyze_player(riot, name: str, tag: str) -> dict:
             "role": ROLE_PT.get(roles.most_common(1)[0][0]) if roles else None}
 
 
-ROLE_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
-
-
-def assign_roles(players: list[dict]) -> list[dict]:
-    """Uma rota por jogador (sem dois Tops): escolhe a combinação que mais bate com o que cada um joga.
-    Devolve os jogadores na ordem Top, Jungle, Mid, ADC, Suporte (quem deu erro vai pro fim)."""
-    ok = [p for p in players if not p.get("error")]
-    bad = [p for p in players if p.get("error")]
-    best, best_score = None, -1
-    for perm in permutations(ROLE_ORDER, len(ok)):
-        score = 0.0
-        for pl, role in zip(ok, perm):
-            games = max(pl["games"], 1)
-            score += pl["roles"].get(role, 0) / games
-        if score > best_score:
-            best, best_score = perm, score
-    for pl, role in zip(ok, best or ()):
-        pl["lane"] = role
-        pl["role"] = ROLE_PT[role]
-        share = pl["roles"].get(role, 0) / max(pl["games"], 1)
-        pl["role_share"] = share
-        main = max(pl["roles"], key=pl["roles"].get) if pl["roles"] else None
-        pl["off_role"] = main is not None and main != role and share < 0.4
-    ok.sort(key=lambda p: ROLE_ORDER.index(p["lane"]))
-    return ok + bad
-
-
 def team_read(players: list[dict], must: list[dict]) -> list[tuple[str, str]]:
     """Leitura do time em frases curtas: (título, texto)."""
     ok = [p for p in players if not p.get("error") and p.get("stats")]
@@ -147,16 +120,16 @@ def team_read(players: list[dict], must: list[dict]) -> list[tuple[str, str]]:
     out = []
     strong = max(ok, key=threat)
     s = strong["stats"]
-    tier = util.elo_str(strong["solo"]["tier"], strong["solo"]["rank"], strong["solo"]["leaguePoints"])         if strong.get("solo") else "sem elo"
-    out.append(("MAIOR AMEAÇA", f"{name(strong)} ({strong['role']}, {tier}): {s['wr'] * 100:.0f}% nas últimas, "
+    solo = strong.get("solo")
+    tier = (util.TIER_PT.get(solo["tier"], solo["tier"]) + ("" if util.TIERS.index(solo["tier"]) >= 7
+            else f" {solo['rank']}")) if solo else "sem elo"
+    out.append(("MAIOR AMEAÇA", f"{name(strong)} ({tier}): {s['wr'] * 100:.0f}% de vitória nas últimas, "
                                 f"KDA {s['kda']:.1f} e {s['dmg'] * 100:.0f}% do dano do time."))
     weak = min(ok, key=threat)
     if weak is not strong:
         w = weak["stats"]
-        why = f"{w['wr'] * 100:.0f}% de vitória e KDA {w['kda']:.1f}"
-        if weak.get("off_role"):
-            why += ", fora da rota principal"
-        out.append(("PONTO FRACO", f"{name(weak)} ({weak['role']}): {why}. Jogue em cima dessa rota."))
+        out.append(("PONTO FRACO", f"{name(weak)}: {w['wr'] * 100:.0f}% de vitória e KDA {w['kda']:.1f} "
+                                   f"nas últimas. É o alvo mais fácil."))
     for p in ok:
         streak = 0
         for won in p["form"]:
@@ -171,10 +144,7 @@ def team_read(players: list[dict], must: list[dict]) -> list[tuple[str, str]]:
         if top["games"] / p["games"] >= 0.6 and not any(c["id"] == top_cid and c["player"] == name(p) for c in must):
             out.append(("MONO", f"{name(p)} joga quase só um campeão ({top['games']} de {p['games']}): "
                                 f"vale o ban se sobrar."))
-    off = [p for p in ok if p.get("off_role")]
-    for p in off:
-        out.append(("FORA DA ROTA", f"{name(p)} deve jogar {p['role']}, mas quase não joga essa rota."))
-    return out[:4]
+    return out[:5]
 
 
 def ban_suggestions(players: list[dict], dd) -> list[dict]:
@@ -220,7 +190,7 @@ def scout_embed(players: list[dict], dd) -> discord.Embed:
         solo = pl["solo"]
         elo = util.elo_str(solo["tier"], solo["rank"], solo["leaguePoints"]) if solo else "Sem elo"
         wr = f" · {util.winrate_str(solo['wins'], solo['losses'])}" if solo else ""
-        head = f"{pl['riot_id']}" + (f" · {pl['role']}" if pl["role"] else "")
+        head = pl["riot_id"]
         top = sorted(pl["champs"].items(), key=lambda kv: -kv[1]["games"])[:3]
         lines = [f"**{dd.champ_name(cid)}** {c['games']}j {c['wins']}V · KDA {(c['k'] + c['a']) / max(c['d'], 1):.1f}"
                  for cid, c in top] or ["sem ranqueadas recentes"]
@@ -302,7 +272,7 @@ class Scout(commands.Cog):
                 await status(f"🔎 Analisando {name} ({i}/{len(players)})...")
                 results.append(await self.player(name, tag))
         await status("🎨 Montando o card...")
-        results = assign_roles([dict(r) for r in results])   # cópia: o cache não guarda a rota deste time
+        results = [dict(r) for r in results]   # cópia: o desenho anota coisas no dicionário
         cands = ban_suggestions(results, self.bot.ddragon)
         must, extra = split_bans(cands)
         notes = team_read(results, must)
@@ -312,7 +282,16 @@ class Scout(commands.Cog):
             log.exception("Falha ao desenhar o card do scout; mandando em texto")
             await interaction.edit_original_response(content=None, embed=scout_embed(results, self.bot.ddragon))
             return
-        await interaction.edit_original_response(content=None, attachments=[discord.File(img, filename="scout.jpg")])
+        # um embed por imagem: o Discord mostra cada card na largura toda (no máximo 10 por mensagem)
+        files = [discord.File(buf, filename=f"scout{i}.jpg") for i, buf in enumerate(img)]
+        embeds = []
+        for f in files:
+            e = discord.Embed(color=0xE84057)
+            e.set_image(url=f"attachment://{f.filename}")
+            embeds.append(e)
+        await interaction.edit_original_response(content=None, embeds=embeds[:10], attachments=files[:10])
+        for i in range(10, len(files), 10):
+            await interaction.followup.send(embeds=embeds[i:i + 10], files=files[i:i + 10])
 
 
 async def setup(bot):
