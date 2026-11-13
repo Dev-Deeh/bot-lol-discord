@@ -81,7 +81,8 @@ class Servidor(commands.Cog):
 
     # ------------------------------------------------------------ times do servidor
     # Config do servidor: "privados:cat" = ID da categoria; "privados:roles" = IDs dos cargos do time (vírgula).
-    # Vários times: config "times" = "cargo:categoria_de_voz_do_time:categoria_tierlist" separados por ";".
+    # Vários times: config "times" = "cargos:categoria_de_voz_do_time:categoria_tierlist" separados por ";".
+    # "cargos" = IDs separados por vírgula (ex.: Titular e Reserva do time); quem tem qualquer um é do time.
     async def teams(self, guild: discord.Guild) -> list[tuple]:
         raw = await self.bot.db.get_config(guild.id, "times")
         out = []
@@ -89,7 +90,8 @@ class Servidor(commands.Cog):
             for part in str(raw).split(";"):
                 bits = part.split(":")
                 if len(bits) == 3 and all(bits):
-                    out.append((int(bits[0]), guild.get_channel(int(bits[1])), guild.get_channel(int(bits[2]))))
+                    ids = frozenset(int(r) for r in bits[0].split(",") if r)
+                    out.append((ids, guild.get_channel(int(bits[1])), guild.get_channel(int(bits[2]))))
             return [t for t in out if t[1] is not None]
         cat_id = await self.bot.db.get_config(guild.id, "privados:cat")
         roles = await self.bot.db.get_config(guild.id, "privados:roles")
@@ -97,12 +99,12 @@ class Servidor(commands.Cog):
         if category is None or not roles:
             return []
         tcat = await self.tier_category(guild)
-        return [(int(r), category, tcat) for r in str(roles).split(",") if r]
+        return [(frozenset({int(r)}), category, tcat) for r in str(roles).split(",") if r]
 
     @staticmethod
     def team_of(member: discord.Member, teams):
         ids = {r.id for r in member.roles}
-        return next((t for t in teams if t[0] in ids), None)
+        return next((t for t in teams if t[0] & ids), None)
 
     def guild_lock(self, guild_id: int) -> asyncio.Lock:
         # uma sincronização por vez em cada servidor (evita criar a mesma sala duas vezes)
