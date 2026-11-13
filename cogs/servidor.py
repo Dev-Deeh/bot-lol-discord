@@ -77,12 +77,11 @@ class Servidor(commands.Cog):
             channel = interaction.guild.get_channel(row["channel_id"]) if row else None
             if channel:
                 return channel
-        raise UserError("Você não tem sala privada. Ela é criada quando você recebe um cargo do time.")
+        raise UserError("Você não está numa sala privada. Entre em ➕ Criar sala pra ganhar a sua.")
 
-    # ------------------------------------------------------------ privado fixo de cada jogador
+    # ------------------------------------------------------------ times do servidor
     # Config do servidor: "privados:cat" = ID da categoria; "privados:roles" = IDs dos cargos do time (vírgula).
-    # Quem tem um cargo do time ganha uma sala "🔒 Nome" só sua; quem perde o cargo perde a sala.
-    # Vários times: config "times" = "cargo:categoria_privados:categoria_tierlist" separados por ";".
+    # Vários times: config "times" = "cargo:categoria_de_voz_do_time:categoria_tierlist" separados por ";".
     async def teams(self, guild: discord.Guild) -> list[tuple]:
         raw = await self.bot.db.get_config(guild.id, "times")
         out = []
@@ -116,54 +115,22 @@ class Servidor(commands.Cog):
             await self._sync_member(member, teams)
 
     async def _sync_member(self, member: discord.Member, teams):
+        """Mantém o canal de tier list do jogador no time certo.
+        As salas de voz agora são sob demanda (➕ Criar sala): a sala fixa antiga, se existir, é apagada."""
         if member.bot or not teams:
             return
         team = self.team_of(member, teams)
-        is_team = team is not None
-        category = team[1] if team else None
         await self._sync_tier(member, team[2] if team else None)
         row = await self.bot.db.fetchone("SELECT channel_id FROM personal_rooms WHERE guild_id=? AND owner_id=?",
                                          (member.guild.id, member.id))
-        room = member.guild.get_channel(row["channel_id"]) if row else None
-        if is_team and room is not None and room.category_id != category.id:  # trocou de time: sala nova no time novo
-            try:
-                await room.delete(reason="Trocou de time")
-            except discord.HTTPException:
-                pass
-            await self.bot.db.execute("DELETE FROM personal_rooms WHERE channel_id=?", (row["channel_id"],))
-            room, row = None, None
-        if is_team and room is None:
-            overwrites = {}
-            for target, ow in category.overwrites.items():
-                ow = discord.PermissionOverwrite(**dict(ow))
-                if ow.connect:  # o time vê a sala, mas só entra quem o dono chamar
-                    ow.update(connect=False)
-                overwrites[target] = ow
-            everyone = overwrites.get(member.guild.default_role, discord.PermissionOverwrite())
-            everyone.update(connect=False)
-            overwrites[member.guild.default_role] = everyone
-            overwrites[member] = owner_overwrite()
-            overwrites[member.guild.me] = discord.PermissionOverwrite(view_channel=True, connect=True,
-                                                                      manage_channels=True, move_members=True)
-            try:
-                room = await member.guild.create_voice_channel(f"🔒 {member.display_name}"[:100], category=category,
-                                                               overwrites=overwrites, reason="Privado do jogador")
-                await self.bot.db.execute("INSERT OR REPLACE INTO personal_rooms (channel_id, guild_id, owner_id) "
-                                          "VALUES (?,?,?)", (room.id, member.guild.id, member.id))
-                log.info("Privado criado para %s", member)
-            except discord.HTTPException as e:
-                log.warning("Falha ao criar privado de %s: %s", member, e)
-        elif is_team and room is not None:
-            if room.overwrites_for(member) != owner_overwrite():
-                try:
-                    await room.set_permissions(member, overwrite=owner_overwrite(), reason="Permissões do dono")
-                except discord.HTTPException:
-                    pass
-        elif not is_team and row:
+        if row:
+            room = member.guild.get_channel(row["channel_id"])
+            if room is not None and room.members:
+                return  # tem gente dentro: apaga na próxima volta
             await self.bot.db.execute("DELETE FROM personal_rooms WHERE channel_id=?", (row["channel_id"],))
             if room:
                 try:
-                    await room.delete(reason="Saiu do time")
+                    await room.delete(reason="Salas fixas viraram sob demanda")
                 except discord.HTTPException:
                     pass
 
@@ -237,16 +204,6 @@ class Servidor(commands.Cog):
                             await channel.delete(reason="Tier list sem dono do time")
                         except discord.HTTPException:
                             pass
-            # faxina: qualquer sala na categoria que não seja o privado registrado de alguém do time é apagada
-            rows = await self.bot.db.fetchall("SELECT channel_id FROM personal_rooms WHERE guild_id=?", (guild.id,))
-            tracked = {r["channel_id"] for r in rows}
-            for channel in [c for cat in {t[1].id: t[1] for t in teams}.values() for c in cat.voice_channels]:
-                if channel.id not in tracked:
-                    try:
-                        await channel.delete(reason="Privado sem dono do time")
-                        log.info("Privado órfão apagado: %s", channel.name)
-                    except discord.HTTPException:
-                        pass
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
