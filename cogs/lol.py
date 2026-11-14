@@ -3,6 +3,7 @@ import asyncio
 import io
 import logging
 import random
+import time
 
 import aiohttp
 import discord
@@ -18,6 +19,7 @@ log = logging.getLogger("bot.lol")
 
 QUEUES = {420: "Ranqueada Solo/Duo", 440: "Ranqueada Flex", 400: "Normal Escolha", 430: "Normal às Cegas",
           490: "Partida Rápida", 450: "ARAM", 1700: "Arena", 1900: "URF", 0: "Personalizada"}
+RANKED_QUEUES = {420: "RANKED_SOLO_5x5", 440: "RANKED_FLEX_SR"}
 
 
 def png(buf, name: str) -> discord.File:
@@ -237,7 +239,8 @@ class Lol(commands.Cog):
         if not guild:
             return
         riot = self.bot.riot
-        solo = await riot.solo_entry(row["puuid"]) or {}
+        entries = {e.get("queueType"): e for e in await riot.league_entries(row["puuid"])}
+        solo = entries.get("RANKED_SOLO_5x5") or {}
         tier, rank, lp = solo.get("tier"), solo.get("rank"), solo.get("leaguePoints")
         name = row["riot_id"].rpartition("#")[0]
 
@@ -261,20 +264,50 @@ class Lol(commands.Cog):
             "UPDATE accounts SET tier=?, rank=?, lp=?, wins=?, losses=? WHERE guild_id=? AND user_id=?",
             (tier, rank, lp, solo.get("wins"), solo.get("losses"), row["guild_id"], row["user_id"]))
 
-        ids = await riot.match_ids(row["puuid"], count=1, type="ranked")
-        if ids and ids[0] != row["last_match"]:
-            await self.bot.db.execute("UPDATE accounts SET last_match=? WHERE guild_id=? AND user_id=?",
-                                      (ids[0], row["guild_id"], row["user_id"]))
-            channel = await util.get_channel(self.bot, guild, "partidas")
-            if channel:
-                match = await riot.match(ids[0])
-                if match:
-                    info = match["info"]
-                    p = next(x for x in info["participants"] if x["puuid"] == row["puuid"])
-                    card = await self.bot.cards.match(p, info, name, QUEUES.get(info["queueId"], "Ranqueada"))
-                    await channel.send(f"<@{row['user_id']}>", file=png(card, "partida"),
-                                       allowed_mentions=discord.AllowedMentions.none())
+        key = (row["guild_id"], row["user_id"])
+        for q in RANKED_QUEUES.values():  # primeira vez: guarda o elo atual como ponto de partida
+            e = entries.get(q)
+            if e:
+                await self.bot.db.execute(
+                    "INSERT OR IGNORE INTO rank_snap VALUES (?,?,?,?,?,?)",
+                    (*key, q, e.get("tier"), e.get("rank"), e.get("leaguePoints")))
 
+        ids = await riot.match_ids(row["puuid"], count=1, type="ranked")
+        if not ids or ids[0] == row["last_match"]:
+            return
+        match = await riot.match(ids[0])
+        if not match:
+            return
+        info = match["info"]
+        q = RANKED_QUEUES.get(info["queueId"])
+        rank_info = None
+        if q and entries.get(q) and info["gameDuration"] >= 300:  # remake não mexe no PDL
+            now_e = entries[q]
+            snap = await self.bot.db.fetchone(
+                "SELECT tier, rank, lp FROM rank_snap WHERE guild_id=? AND user_id=? AND queue=?", (*key, q))
+            if snap:
+                before = util.elo_score(snap["tier"], snap["rank"], snap["lp"])
+                after = util.elo_score(now_e.get("tier"), now_e.get("rank"), now_e.get("leaguePoints"))
+                ended_ms = info.get("gameEndTimestamp") or 0
+                fresh = time.time() * 1000 - ended_ms < 25 * 60 * 1000
+                if before == after and fresh:
+                    return  # a Riot ainda não atualizou o PDL: tenta de novo na próxima volta
+                if before is not None and after is not None:
+                    move = "up" if (now_e["tier"], now_e.get("rank")) != (snap["tier"], snap["rank"]) and after > before                         else "down" if (now_e["tier"], now_e.get("rank")) != (snap["tier"], snap["rank"]) else None
+                    rank_info = {"diff": after - before, "tier": now_e["tier"], "rank": now_e.get("rank"),
+                                 "lp": now_e.get("leaguePoints"), "move": move}
+            await self.bot.db.execute(
+                "INSERT OR REPLACE INTO rank_snap VALUES (?,?,?,?,?,?)",
+                (*key, q, now_e.get("tier"), now_e.get("rank"), now_e.get("leaguePoints")))
+
+        await self.bot.db.execute("UPDATE accounts SET last_match=? WHERE guild_id=? AND user_id=?",
+                                  (ids[0], *key))
+        channel = await util.get_channel(self.bot, guild, "partidas")
+        if channel:
+            p = next(x for x in info["participants"] if x["puuid"] == row["puuid"])
+            card = await self.bot.cards.match(p, info, name, QUEUES.get(info["queueId"], "Ranqueada"), rank_info)
+            await channel.send(f"<@{row['user_id']}>", file=png(card, "partida"),
+                               allowed_mentions=discord.AllowedMentions.none())
 
 async def setup(bot):
     await bot.add_cog(Lol(bot))

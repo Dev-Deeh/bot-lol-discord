@@ -415,15 +415,16 @@ class CardMaker:
         return to_png(base)
 
     # -------------------------------------------------------------- RESUMO DE PARTIDA
-    async def match(self, p: dict, info: dict, riot_name: str, queue_name: str) -> io.BytesIO:
+    async def match(self, p: dict, info: dict, riot_name: str, queue_name: str,
+                    rank_info: dict | None = None) -> io.BytesIO:
         cid = self.champ_id(p["championId"])
         items = [p.get(f"item{i}") for i in range(7)]
         urls = [self.dd.splash(cid) if cid else None, self.dd.champ_icon(cid) if cid else None]
         urls += [self.dd.item_icon(i) if i else None for i in items]
         images = await self.imgs(urls)
-        return await asyncio.to_thread(self._match, p, info, riot_name, queue_name, images)
+        return await asyncio.to_thread(self._match, p, info, riot_name, queue_name, images, rank_info)
 
-    def _match(self, p, info, riot_name, queue_name, images):
+    def _match(self, p, info, riot_name, queue_name, images, rank_info=None):
         W, H = 1100, 380
         splash, icon, *items = images
         win = p["win"]
@@ -446,6 +447,24 @@ class CardMaker:
             x = W - 45 - (7 - i) * 54
             im = items[i] if i < len(items) else None
             paste(base, rounded(im, 48, 48, 8) if im else None, (x, 48), (48, 48))
+
+        # PDL ganho/perdido e promoção
+        if rank_info:
+            diff = rank_info["diff"]
+            pdl = f"{diff:+d} PDL" if diff else "±0 PDL"
+            text(d, (W - 45, 108), pdl, font(40, "Black"), WIN if diff > 0 else LOSS if diff < 0 else MUTED, anchor="ra")
+            elo = tier_label(rank_info["tier"], rank_info["rank"])
+            move = rank_info.get("move")
+            if move:
+                label = ("SUBIU PARA " if move == "up" else "CAIU PARA ") + elo
+                fill = GOLD if move == "up" else LOSS
+                mw = font(18, "Black").getlength(label) + 32
+                panel(base, (W - 45 - mw, 160, W - 45, 192), 16, fill=fill + (255,))
+                d = ImageDraw.Draw(base)
+                text(d, (W - 45 - mw / 2, 176), label, font(18, "Black"), BG, anchor="mm", shadow=False)
+            else:
+                text(d, (W - 45, 162), f"{elo}  ·  {rank_info['lp']} PDL", font(18, "Bold"),
+                     tier_color(rank_info["tier"]), anchor="ra")
 
         # KDA
         kda = (p["kills"] + p["assists"]) / max(p["deaths"], 1)

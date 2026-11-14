@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS personal_rooms (channel_id INTEGER PRIMARY KEY, guild
 CREATE TABLE IF NOT EXISTS tier_channels (channel_id INTEGER PRIMARY KEY, guild_id INTEGER, owner_id INTEGER);
 
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+
+-- elo de cada fila na hora da última partida postada (pra mostrar o PDL ganho no card)
+CREATE TABLE IF NOT EXISTS rank_snap (
+    guild_id INTEGER, user_id INTEGER, queue TEXT, tier TEXT, rank TEXT, lp INTEGER,
+    PRIMARY KEY (guild_id, user_id, queue));
 """
 
 
