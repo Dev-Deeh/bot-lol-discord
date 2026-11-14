@@ -1,7 +1,7 @@
 """Card dos avisos de evento do app da Bloom (scrim, coach, jogo oficial) no canal #notícias.
 
 Mesmo visual do /scout: fundo escuro, Bebas Neue nos números e títulos, Barlow nos rótulos.
-Cada time tem a sua cor (Bloom White gelo, Bloom Red vermelho)."""
+Cada time tem a sua cor (Bloom roxo, Bloom White gelo, Bloom Red vermelho)."""
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,7 +18,7 @@ GRAY = (120, 116, 132)
 BRT = timezone(timedelta(hours=-3))  # horário de Brasília (sem horário de verão)
 LOGO = Path(__file__).resolve().parent.parent / "assets" / "bloom" / "logo.png"
 
-TEAM_COLOR = {"Bloom White": (196, 220, 248), "Bloom Red": (232, 71, 91)}
+TEAM_COLOR = {"Bloom": (155, 107, 255), "Bloom White": (196, 220, 248), "Bloom Red": (232, 71, 91)}
 KIND_LABEL = {"created": "NOVO EVENTO", "time": "HORÁRIO ALTERADO", "cancelled": "EVENTO CANCELADO",
               "updated": "EVENTO ATUALIZADO", "reminder": "LEMBRETE"}
 WEEKDAY = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"]

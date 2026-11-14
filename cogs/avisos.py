@@ -14,7 +14,7 @@ from core import cards_aviso
 from core.cards_aviso import render_aviso
 
 log = logging.getLogger("bot.avisos")
-TEAMS = ("Bloom White", "Bloom Red")
+TEAMS = ("Bloom", "Bloom White", "Bloom Red")
 KIND_BY_EMOJI = {"📅": "created", "🔁": "time", "❌": "cancelled", "✏️": "updated", "⏰": "reminder"}
 
 
