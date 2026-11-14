@@ -11,7 +11,7 @@ import re
 import time
 import unicodedata
 from collections import Counter, defaultdict
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import discord
 from discord import app_commands
@@ -63,6 +63,19 @@ def parse_players(text: str) -> list[tuple[str, str]]:
             seen.add(key)
             players.append((name, tag))
     return players[:MAX_PLAYERS]
+
+
+def opgg_url(players: list[tuple[str, str]]) -> str:
+    """Link da multibusca do OP.GG com todos os jogadores (Nome#TAG separados por vírgula)."""
+    names = ",".join(f"{n}#{t}" for n, t in players)
+    return "https://op.gg/lol/multisearch/br?summoners=" + quote(names, safe="")
+
+
+def opgg_view(players: list[tuple[str, str]]) -> discord.ui.View:
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(style=discord.ButtonStyle.link, label="Abrir no OP.GG (multibusca)",
+                                    url=opgg_url(players)))
+    return view
 
 
 # ------------------------------------------------------------------ análise
@@ -291,9 +304,14 @@ class Scout(commands.Cog):
             e = discord.Embed(color=0xE84057)
             e.set_image(url=f"attachment://{f.filename}")
             embeds.append(e)
-        await interaction.edit_original_response(content=None, embeds=embeds[:10], attachments=files[:10])
+        view = opgg_view(players)
+        last = len(files) <= 10
+        await interaction.edit_original_response(content=None, embeds=embeds[:10], attachments=files[:10],
+                                                 view=view if last else None)
         for i in range(10, len(files), 10):
-            await interaction.followup.send(embeds=embeds[i:i + 10], files=files[i:i + 10])
+            last = i + 10 >= len(files)
+            await interaction.followup.send(embeds=embeds[i:i + 10], files=files[i:i + 10],
+                                            view=view if last else discord.utils.MISSING)
 
 
 async def setup(bot):
