@@ -9,6 +9,7 @@ import asyncio
 import logging
 import re
 import time
+import unicodedata
 from collections import Counter, defaultdict
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -31,7 +32,8 @@ ROLE_PT = {"TOP": "Top", "JUNGLE": "Jungle", "MIDDLE": "Mid", "BOTTOM": "ADC", "
 # ------------------------------------------------------------------ leitura dos nicks
 def parse_players(text: str) -> list[tuple[str, str]]:
     """Devolve [(nome, tag)] a partir do link da multibusca, do texto do saguão ou de uma lista."""
-    text = text.strip()
+    # o saguão do LoL cerca cada nick com caracteres invisíveis (isolamento de direção do texto): tira todos
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf").strip()
     raw = []
     if "op.gg" in text.lower() or text.lower().startswith("http"):
         q = parse_qs(urlparse(text).query)
@@ -40,10 +42,10 @@ def parse_players(text: str) -> list[tuple[str, str]]:
                 raw += unquote(v).split(",")
     if not raw:
         # texto do saguão: "Nome #TAG entrou no saguão" / uma pessoa por linha / vírgulas
-        for line in re.split(r"[\n,]+", text):
-            line = re.sub(r"\s+(entrou|joined|saiu|left).*$", "", line.strip(), flags=re.I)
-            if line:
-                raw.append(line)
+        # o Discord às vezes junta as linhas numa só, então também separa pela frase do saguão
+        parts = re.split(r"\s*(?:entrou no sagu[aã]o|saiu do sagu[aã]o|joined the lobby|left the lobby)\.?\s*|[\n,]+",
+                         text, flags=re.I)
+        raw += [p.strip() for p in parts if p and p.strip()]
     players, seen = [], set()
     for item in raw:
         item = unquote(item).strip().strip("+").replace("+", " ")
