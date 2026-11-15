@@ -17,9 +17,20 @@ from core.util import UserError
 
 log = logging.getLogger("bot.lol")
 
-QUEUES = {420: "Ranqueada Solo/Duo", 440: "Ranqueada Flex", 400: "Normal Escolha", 430: "Normal às Cegas",
+QUEUES = {420: "Ranqueada Solo/Duo", 440: "Ranqueada Flex", 710: "Ranqueada 5", 400: "Normal Escolha", 430: "Normal às Cegas",
           490: "Partida Rápida", 450: "ARAM", 1700: "Arena", 1900: "URF", 0: "Personalizada"}
 RANKED_QUEUES = {420: "RANKED_SOLO_5x5", 440: "RANKED_FLEX_SR"}
+KNOWN_LEAGUES = {"RANKED_SOLO_5x5", "RANKED_FLEX_SR", "RANKED_TFT", "RANKED_TFT_TURBO", "RANKED_TFT_DOUBLE_UP"}
+
+
+def league_of(queue_id, entries):
+    """Nome da liga (queueType) da fila. A Ranked 5 (710) é nova e a Riot não documentou o nome:
+    usa a liga de LoL que não for Solo/Duo nem Flex."""
+    if queue_id in RANKED_QUEUES:
+        return RANKED_QUEUES[queue_id]
+    if queue_id == 710:
+        return next((q for q in entries if q and q not in KNOWN_LEAGUES and "TFT" not in q), None)
+    return None
 
 
 def png(buf, name: str) -> discord.File:
@@ -265,9 +276,10 @@ class Lol(commands.Cog):
             (tier, rank, lp, solo.get("wins"), solo.get("losses"), row["guild_id"], row["user_id"]))
 
         key = (row["guild_id"], row["user_id"])
-        for q in RANKED_QUEUES.values():  # primeira vez: guarda o elo atual como ponto de partida
-            e = entries.get(q)
-            if e:
+        had = {r["queue"] for r in await self.bot.db.fetchall(
+            "SELECT queue FROM rank_snap WHERE guild_id=? AND user_id=?", key)}
+        for q, e in entries.items():  # primeira vez: guarda o elo atual como ponto de partida
+            if q and "TFT" not in q and q not in had:
                 await self.bot.db.execute(
                     "INSERT OR IGNORE INTO rank_snap VALUES (?,?,?,?,?,?)",
                     (*key, q, e.get("tier"), e.get("rank"), e.get("leaguePoints")))
@@ -279,13 +291,13 @@ class Lol(commands.Cog):
         if not match:
             return
         info = match["info"]
-        q = RANKED_QUEUES.get(info["queueId"])
+        q = league_of(info["queueId"], entries)
         rank_info = None
         if q and entries.get(q) and info["gameDuration"] >= 300:  # remake não mexe no PDL
             now_e = entries[q]
             snap = await self.bot.db.fetchone(
                 "SELECT tier, rank, lp FROM rank_snap WHERE guild_id=? AND user_id=? AND queue=?", (*key, q))
-            if snap:
+            if snap and q in had:
                 before = util.elo_score(snap["tier"], snap["rank"], snap["lp"])
                 after = util.elo_score(now_e.get("tier"), now_e.get("rank"), now_e.get("leaguePoints"))
                 ended_ms = info.get("gameEndTimestamp") or 0
@@ -293,7 +305,8 @@ class Lol(commands.Cog):
                 if before == after and fresh:
                     return  # a Riot ainda não atualizou o PDL: tenta de novo na próxima volta
                 if before is not None and after is not None:
-                    move = "up" if (now_e["tier"], now_e.get("rank")) != (snap["tier"], snap["rank"]) and after > before                         else "down" if (now_e["tier"], now_e.get("rank")) != (snap["tier"], snap["rank"]) else None
+                    changed = (now_e["tier"], now_e.get("rank")) != (snap["tier"], snap["rank"])
+                    move = ("up" if after > before else "down") if changed else None
                     rank_info = {"diff": after - before, "tier": now_e["tier"], "rank": now_e.get("rank"),
                                  "lp": now_e.get("leaguePoints"), "move": move}
             await self.bot.db.execute(
@@ -308,6 +321,7 @@ class Lol(commands.Cog):
             card = await self.bot.cards.match(p, info, name, QUEUES.get(info["queueId"], "Ranqueada"), rank_info)
             await channel.send(f"<@{row['user_id']}>", file=png(card, "partida"),
                                allowed_mentions=discord.AllowedMentions.none())
+
 
 async def setup(bot):
     await bot.add_cog(Lol(bot))
