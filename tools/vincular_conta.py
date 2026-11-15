@@ -24,7 +24,7 @@ PLATFORM = os.getenv("RIOT_PLATFORM", "br1")
 
 
 def get(host, path):
-    req = urllib.request.Request(f"https://{host}.api.riotgames.com/{path}", headers={"X-Riot-Token": KEY})
+    req = urllib.request.Request(f"https://{host}.api.riotgames.com/{path}", headers={"X-Riot-Token": KEY, "User-Agent": "bot-lol"})
     return json.load(urllib.request.urlopen(req))
 
 
