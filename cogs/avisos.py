@@ -1,7 +1,7 @@
 """Deixa os avisos do app da Bloom mais visuais no Discord.
 
 O robô de avisos (Cloudflare) posta no #notícias de cada time um aviso simples pelo webhook
-"Bloom White App" / "Bloom Red App". Assim que ele chega, o bot desenha o card do evento e
+"Sem Raage! App", "Ministério do Feed App", "Time A1 App" ou "Bloom Red App". Assim que ele chega, o bot desenha o card do evento e
 edita a mesma mensagem pra mostrar o card (as marcações do cargo continuam lá).
 Se o bot estiver fora do ar, o aviso simples fica, então nada se perde."""
 import asyncio
@@ -14,7 +14,7 @@ from core import cards_aviso
 from core.cards_aviso import render_aviso
 
 log = logging.getLogger("bot.avisos")
-TEAMS = ("Bloom", "Bloom White", "Bloom Red")
+TEAMS = ("Bloom", "Bloom White", "Bloom Red", "Sem Raage!", "Ministério do Feed", "Time A1")
 KIND_BY_EMOJI = {"📅": "created", "🔁": "time", "❌": "cancelled", "✏️": "updated", "⏰": "reminder"}
 
 

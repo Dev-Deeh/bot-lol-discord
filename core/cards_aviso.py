@@ -1,7 +1,9 @@
 """Card dos avisos de evento do app da Bloom (scrim, coach, jogo oficial) no canal #notícias.
 
 Mesmo visual do /scout: fundo escuro, Bebas Neue nos números e títulos, Barlow nos rótulos.
-Cada time tem a sua cor (Bloom roxo, Bloom White gelo, Bloom Red vermelho)."""
+Cada time tem a sua cor. Bloom, Bloom White e Bloom Red usam o logo da Bloom pintado na cor do time;
+Sem Raage!, Ministério do Feed e Time A1 usam o próprio logo colorido (baixado do app e guardado em assets/times)."""
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -18,7 +20,13 @@ GRAY = (120, 116, 132)
 BRT = timezone(timedelta(hours=-3))  # horário de Brasília (sem horário de verão)
 LOGO = Path(__file__).resolve().parent.parent / "assets" / "bloom" / "logo.png"
 
-TEAM_COLOR = {"Bloom": (155, 107, 255), "Bloom White": (196, 220, 248), "Bloom Red": (232, 71, 91)}
+TEAM_COLOR = {"Bloom": (155, 107, 255), "Bloom White": (196, 220, 248), "Bloom Red": (232, 71, 91),
+              "Sem Raage!": (167, 123, 255), "Ministério do Feed": (240, 178, 63), "Time A1": (46, 217, 192)}
+# logo colorido de cada time novo: o app publica em PNG; o bot baixa uma vez e guarda
+TEAM_LOGO_URL = {"Sem Raage!": "https://sem-raage.web.app/assets/logo-sr.png",
+                 "Ministério do Feed": "https://ministerio-do-feed.web.app/assets/logo-mdf.png",
+                 "Time A1": "https://time-a1.web.app/assets/logo-a1.png"}
+LOGO_DIR = LOGO.parent.parent / "times"
 KIND_LABEL = {"created": "NOVO EVENTO", "time": "HORÁRIO ALTERADO", "cancelled": "EVENTO CANCELADO",
               "updated": "EVENTO ATUALIZADO", "reminder": "LEMBRETE"}
 WEEKDAY = ["SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM"]
@@ -38,6 +46,30 @@ def team_logo(color, size):
             tinted = Image.new("RGBA", (size, size), color + (255,))
             tinted.putalpha(mask)
             _logo_cache[key] = tinted
+    return _logo_cache[key]
+
+
+def color_logo(team, size, radius=0):
+    """Logo colorido do time (Sem Raage!, Ministério do Feed, Time A1), com cantos arredondados."""
+    url = TEAM_LOGO_URL.get(team)
+    if not url:
+        return None
+    key = ("cor", team, size, radius)
+    if key not in _logo_cache:
+        path = LOGO_DIR / (url.rsplit("/", 1)[-1])
+        try:
+            if not path.exists():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                req = urllib.request.Request(url, headers={"User-Agent": "BotDeehLOL"})
+                path.write_bytes(urllib.request.urlopen(req, timeout=10).read())
+            img = Image.open(path).convert("RGBA").resize((size, size), Image.LANCZOS)
+            if radius:
+                mask = Image.new("L", (size, size), 0)
+                ImageDraw.Draw(mask).rounded_rectangle((0, 0, size - 1, size - 1), radius, fill=255)
+                img.putalpha(Image.composite(img.getchannel("A"), mask, mask))
+            _logo_cache[key] = img
+        except Exception:
+            _logo_cache[key] = None
     return _logo_cache[key]
 
 
@@ -84,7 +116,7 @@ def render_aviso(team, kind, heading, title, start, type_label=None, location=No
     lay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     glow(ImageDraw.Draw(lay))
     base.alpha_composite(lay.filter(ImageFilter.GaussianBlur(120)))
-    big = team_logo((255, 255, 255) if team == "Bloom White" and not cancelled else accent, 560)
+    big = color_logo(team, 560) or team_logo((255, 255, 255) if team == "Bloom White" and not cancelled else accent, 560)
     if big:
         base.alpha_composite(faded(big, 0.10), (W - 470, -20))
     layer(base, lambda d: [d.line((x, 0, x - 260, H), fill=(255, 255, 255, 6), width=2)
@@ -94,7 +126,7 @@ def render_aviso(team, kind, heading, title, start, type_label=None, location=No
 
     # ---- topo: logo, nome do time e o tipo do aviso
     logo_col = (255, 255, 255) if team == "Bloom White" and not cancelled else accent
-    small = team_logo(logo_col, 76)
+    small = color_logo(team, 76, radius=16) or team_logo(logo_col, 76)
     x = M
     if small:
         base.alpha_composite(small, (M - 6, 38))
@@ -155,6 +187,11 @@ def render_aviso(team, kind, heading, title, start, type_label=None, location=No
     widths = [1.0] * len(tiles)
     if location:
         widths[[t[0] for t in tiles].index("ONDE")] = 1.6
+    if cancelled:  # "CANCELADO" e o dia inteiros: o "ONDE" cede espaço
+        names = [t[0] for t in tiles]
+        widths[names.index("SITUAÇÃO")] = 1.35
+        if location:
+            widths[names.index("ONDE")] = 1.2
     unit = (W - 2 * M - gap * (len(tiles) - 1)) / max(sum(widths), 1)
     x = M
     for (label, value), wf in zip(tiles, widths):
