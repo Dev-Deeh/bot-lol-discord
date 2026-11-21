@@ -6,3 +6,4 @@ __pycache__/
 *.zip
 tools/*_ids.json
 assets/bloom/
+backups/
